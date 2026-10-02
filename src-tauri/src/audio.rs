@@ -25,7 +25,8 @@ use tracing::{error, info, warn};
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// Maximum number of f32 chunks queued between capture and inference.
-const CHANNEL_CAPACITY: usize = 200;
+/// Long enough that a slow transcription pass cannot drop the rest of a sentence.
+const CHANNEL_CAPACITY: usize = 4_000;
 
 /// A chunk of raw f32 samples (already at 16 kHz, mono).
 pub type AudioChunk = Vec<f32>;

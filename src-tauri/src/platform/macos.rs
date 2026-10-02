@@ -392,12 +392,23 @@ fn release_event_matches(event: *mut Object) -> bool {
         let flags: u64 = msg_send![event, modifierFlags];
         let expected = RELEASE_KEY.load(Ordering::Relaxed);
         let mods = RELEASE_MODS.load(Ordering::Relaxed);
+
+        // The shortcut's own key went up (Space, J, …).
         if code == expected {
             return true;
         }
-        // Modifier let go (Option, Control, …) even if the letter key is still down.
-        mods != 0 && (flags & mods) != mods
+
+        // A modifier key went up and the required modifiers are no longer held.
+        // Do not treat other key-ups this way. Live transcription posts Cmd+V,
+        // and those key-ups do not include Option/Ctrl. Counting them as a
+        // release stopped the recording after the first phrase.
+        is_modifier_key(code) && mods != 0 && (flags & mods) != mods
     }
+}
+
+fn is_modifier_key(code: u16) -> bool {
+    // Left/right command, shift, option, control, caps lock, fn.
+    matches!(code, 54 | 55 | 56 | 57 | 58 | 59 | 60 | 61 | 62 | 63)
 }
 
 fn shortcut_watch(shortcut: &str) -> (u16, u64) {

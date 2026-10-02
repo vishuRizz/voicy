@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useSession } from '../hooks/useSession';
 import { useSettings } from '../hooks/useSettings';
+import { MadeBy } from './MadeBy';
 import { getModelStatus, getPermissionStatus } from '../lib/tauri';
 import type { PermissionStatus, WhisperModel } from '../types';
 import myIcon from '../assets/myicon.png';
@@ -222,6 +223,7 @@ export const MenuBarPanel: React.FC = () => {
         <button type="button" className="menu-quit" onClick={() => invoke('quit_app')}>
           Quit Voicy
         </button>
+        <MadeBy />
       </div>
     </div>
   );

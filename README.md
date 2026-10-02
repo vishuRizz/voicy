@@ -201,3 +201,12 @@ MIT — see `LICENSE`.
 cd /Users/vishupratap/Movies/voice-key
 source ~/.cargo/env && export PATH="/opt/homebrew/bin:$PATH"
 npm run tauri -- dev
+
+
+## export
+source ~/.cargo/env
+npm run tauri -- build --bundles dmg
+
+
+## windows build
+npm run tauri -- build

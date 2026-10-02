@@ -237,6 +237,23 @@ body {
   color: var(--color-accent);
 }
 
+.made-by {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  text-decoration: none;
+  letter-spacing: 0.01em;
+}
+
+.made-by span {
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.made-by:hover span {
+  color: var(--color-accent);
+}
+
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
 .btn-primary {
   display: inline-flex;
@@ -1482,6 +1499,12 @@ html.menu-mode #root {
 
 .menu-quit:hover {
   background: rgba(255, 107, 107, 0.12);
+}
+
+.menu-card .made-by {
+  display: block;
+  text-align: center;
+  margin-top: -6px;
 }
 
 @keyframes menu-bar {

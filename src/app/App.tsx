@@ -8,6 +8,7 @@ import { PermissionOnboarding } from '../components/PermissionOnboarding';
 import { SettingsPanel } from '../components/Settings';
 import { ListeningOverlay } from '../components/ListeningOverlay';
 import { MenuBarPanel } from '../components/MenuBarPanel';
+import { MadeBy } from '../components/MadeBy';
 import { ToastContainer } from '../components/Toast';
 import { useSession } from '../hooks/useSession';
 import { useSettings } from '../hooks/useSettings';
@@ -164,6 +165,7 @@ const MainShell: React.FC = () => {
 
         <footer className="app-footer">
           <span className="footer-privacy">🔒 Local inference · No cloud · No logging</span>
+          <MadeBy />
           <a
             id="open-onboarding-link"
             href="#"

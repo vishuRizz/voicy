@@ -99,30 +99,46 @@ fn transcribe_with(
     samples: &[f32],
     language: &str,
 ) -> Result<String> {
+    // Multiple segments so a pause does not end the utterance. `no_timestamps`
+    // makes whisper.cpp jump to the end of the chunk at the first end-of-text
+    // token, which dropped everything after the opening phrase.
+    let text = decode(ctx, samples, language, false)?;
+    if !text.is_empty() {
+        return Ok(text);
+    }
+    // Very short clips sometimes produce no segments when timestamps are on.
+    decode(ctx, samples, language, true)
+}
+
+fn decode(
+    ctx: &whisper_rs::WhisperContext,
+    samples: &[f32],
+    language: &str,
+    no_timestamps: bool,
+) -> Result<String> {
     use whisper_rs::{FullParams, SamplingStrategy};
 
     let mut state = ctx
         .create_state()
         .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+    // best_of -1 keeps whisper.cpp's own default.
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: -1 });
 
     if language != "auto" {
         params.set_language(Some(language));
     }
 
-    // Timestamps must be off: on a short utterance whisper.cpp logs
-    // "single timestamp ending - skip entire chunk" and returns no text.
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
-    params.set_no_timestamps(true);
-    params.set_single_segment(true);
+    params.set_no_timestamps(no_timestamps);
+    params.set_single_segment(false);
     params.set_no_context(true);
     params.set_suppress_blank(true);
 
-    // whisper.cpp mishandles clips shorter than ~1s.
+    // whisper.cpp skips clips shorter than about a second.
     let mut padded = samples.to_vec();
     let min_samples = TARGET_SAMPLE_RATE as usize;
     if padded.len() < min_samples {
@@ -142,7 +158,7 @@ fn transcribe_with(
         .collect::<Vec<_>>()
         .join(" ");
 
-    Ok(text.trim().to_string())
+    Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Result<String> {

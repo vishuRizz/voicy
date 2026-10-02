@@ -85,6 +85,7 @@ pub fn run() {
             commands::start_onboarding_check,
             commands::open_settings_window,
             commands::quit_app,
+            commands::open_portfolio,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Voicy")
@@ -285,6 +286,16 @@ pub mod commands {
     #[tauri::command]
     pub fn quit_app(app: AppHandle) {
         app.exit(0);
+    }
+
+    /// Open the portfolio in the default browser.
+    #[tauri::command]
+    pub fn open_portfolio() {
+        let url = "https://vishu.app";
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(url).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
     }
 
     /// Pop the menu-bar panel under the status icon, or hide it if it is open.
