@@ -83,21 +83,52 @@ pub fn model_path(app: &AppHandle, filename: &str) -> Result<PathBuf, VoiceKeyEr
 /// * `samples` – f32 PCM at 16 kHz, mono
 /// * `model_path` – path to the `.bin` model file
 /// * `language` – BCP-47 code or "auto"
-pub fn run_whisper(samples: &[f32], _model_path: &PathBuf, language: &str) -> Result<String> {
-    // ── STUB ────────────────────────────────────────────────────────────────
-    // Replace this body with:
-    //   let ctx = WhisperContext::new(model_path.to_str().unwrap())?;
-    //   let mut state = ctx.create_state()?;
-    //   let params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
-    //   params.set_language(Some(language));
-    //   state.full(params, samples)?;
-    //   let text = (0..state.full_n_segments()?)
-    //       .map(|i| state.full_get_segment_text(i).unwrap_or_default())
-    //       .collect::<Vec<_>>().join(" ");
-    //   Ok(text)
-    // ────────────────────────────────────────────────────────────────────────
-    let _ = (samples, language);
-    Ok(String::from("[whisper.cpp transcription — stub]"))
+pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Result<String> {
+    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+    let model_str = model_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("ASR_MODEL_MISSING: invalid model path"))?;
+
+    // Load the model (whisper-rs caches the context internally on repeated calls
+    // to the same path in the same process; a persistent-context optimisation
+    // can be added once the session coordinator owns the WhisperContext).
+    let ctx = WhisperContext::new_with_params(model_str, WhisperContextParameters::default())
+        .map_err(|e| anyhow::anyhow!("ASR_MODEL_MISSING: {e}"))?;
+
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
+
+    // Language: "auto" maps to None (auto-detection); everything else is a BCP-47 code.
+    if language != "auto" {
+        params.set_language(Some(language));
+    }
+
+    // Suppress blank outputs and excessive timestamps in the transcript.
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_suppress_blank(true);
+
+    // whisper-rs expects exactly 16 kHz mono f32 — already guaranteed by audio.rs.
+    state
+        .full(params, samples)
+        .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
+
+    let n = state
+        .full_n_segments()
+        .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
+
+    let text = (0..n)
+        .filter_map(|i| state.full_get_segment_text(i).ok())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    Ok(text.trim().to_string())
 }
 
 // ── TranscriptionCoordinator ─────────────────────────────────────────────────

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Required for global-shortcut key-up detection -->
+  <key>com.apple.security.input-monitoring</key>
+  <true/>
+  <!-- Required for Accessibility-based text insertion -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <!-- Required for microphone capture -->
+  <key>com.apple.security.device.microphone</key>
+  <true/>
+  <!-- Allow JIT for the Webview (Tauri default) -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <!-- Allow unsigned executable memory -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- Allow DYLD environment variables -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>
