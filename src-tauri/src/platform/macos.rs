@@ -156,9 +156,32 @@ pub async fn open_microphone_settings() {
 }
 
 pub async fn open_accessibility_settings() {
-    // First trigger the real system prompt (adds us by name to the list)
+    // A deleted or rebuilt Voicy can stay listed as On. That grant does not
+    // apply to this copy, so reset it before asking again.
+    for id in ["com.voicekey.app", "Voicy", "VoiceKey"] {
+        let result = std::process::Command::new("tccutil")
+            .args(["reset", "Accessibility", id])
+            .output();
+        match result {
+            Ok(o) if o.status.success() => {
+                info!("Cleared stale Accessibility grant for {id}");
+            }
+            Ok(o) => {
+                let msg = String::from_utf8_lossy(&o.stderr);
+                tracing::debug!("tccutil reset {id}: {msg}");
+            }
+            Err(e) => tracing::debug!("tccutil unavailable: {e}"),
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(path) = exe.to_str() {
+            let _ = std::process::Command::new("tccutil")
+                .args(["reset", "Accessibility", path])
+                .output();
+        }
+    }
+
     ax_prompt_for_trust();
-    // Then open Settings so user sees the toggle
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")

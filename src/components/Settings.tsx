@@ -18,6 +18,7 @@ const QUALITY_OPTIONS: { value: WhisperModel; label: string; desc: string }[] = 
 
 const LANGUAGE_OPTIONS = [
   { value: 'en', label: 'English' },
+  { value: 'hinglish', label: 'Hinglish' },
   { value: 'fr', label: 'French' },
   { value: 'de', label: 'German' },
   { value: 'es', label: 'Spanish' },
@@ -53,7 +54,7 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
     let cancelled = false;
     setDownloadError(null);
     setModelStatus(null);
-    getModelStatus(draft.model)
+    getModelStatus(draft.model, draft.language)
       .then((status) => {
         if (!cancelled) setModelStatus(status);
       })
@@ -61,7 +62,7 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
     return () => {
       cancelled = true;
     };
-  }, [draft.model]);
+  }, [draft.model, draft.language]);
 
   function update<K extends keyof SettingsType>(key: K, val: SettingsType[K]) {
     setDraft((d) => ({ ...d, [key]: val }));
@@ -91,7 +92,7 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
         setDownloadPct(e.payload.pct);
         if (e.payload.done) {
           setDownloading(false);
-          getModelStatus(model).then(setModelStatus).catch(console.error);
+          getModelStatus(model, draft.language).then(setModelStatus).catch(console.error);
           unlisten();
         }
         if (e.payload.error) {
@@ -238,6 +239,11 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
             ))}
           </select>
         </div>
+        {draft.language === 'hinglish' && (
+          <p className="settings-hint">
+            Hinglish uses a multilingual model. Hindi is recognized properly, then written in Latin letters. Download it if it is not on this Mac yet.
+          </p>
+        )}
       </section>
 
       {/* ── Toggles ───────────────────────────────────────────────────── */}

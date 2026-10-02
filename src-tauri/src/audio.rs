@@ -46,6 +46,12 @@ impl CaptureHandle {
     pub fn stop(&self) {
         let _ = self.stop_tx.send(());
     }
+
+    /// Another copy of the stop signal, so key-up can halt the mic
+    /// without waiting for a transcription pass to finish.
+    pub fn stop_sender(&self) -> mpsc::Sender<()> {
+        self.stop_tx.clone()
+    }
 }
 
 impl Drop for CaptureHandle {

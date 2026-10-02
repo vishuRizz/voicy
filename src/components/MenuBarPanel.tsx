@@ -19,6 +19,7 @@ const QUALITY: { value: WhisperModel; label: string; hint: string }[] = [
 
 const LANGUAGES = [
   { value: 'en', label: 'EN' },
+  { value: 'hinglish', label: 'Hing' },
   { value: 'fr', label: 'FR' },
   { value: 'de', label: 'DE' },
   { value: 'es', label: 'ES' },
@@ -73,7 +74,7 @@ export const MenuBarPanel: React.FC = () => {
     let cancelled = false;
     Promise.all(
       QUALITY.map((q) =>
-        getModelStatus(q.value).then((s) => [q.value, s.installed] as const),
+        getModelStatus(q.value, settings.language).then((s) => [q.value, s.installed] as const),
       ),
     )
       .then((pairs) => {
@@ -88,7 +89,7 @@ export const MenuBarPanel: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [settings.model]);
+  }, [settings.model, settings.language]);
 
   const listening = uiState === 'listening' || uiState === 'finalizing' || uiState === 'inserting';
   const ready =
@@ -109,6 +110,10 @@ export const MenuBarPanel: React.FC = () => {
   async function setLanguage(language: string) {
     if (language === settings.language) return;
     await save({ ...settings, language });
+    if (language === 'hinglish') {
+      const status = await getModelStatus(settings.model, language);
+      if (!status.installed) await openWindow('settings');
+    }
   }
 
   const statusLabel =

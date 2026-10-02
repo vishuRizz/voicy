@@ -48,6 +48,10 @@ pub fn run() {
         .manage(std::sync::Arc::new(parking_lot::Mutex::new(
             None::<tokio::sync::oneshot::Sender<bool>>,
         )))
+        // Lets key-up stop the microphone immediately, even if Whisper is busy.
+        .manage(std::sync::Arc::new(parking_lot::Mutex::new(
+            None::<std::sync::mpsc::Sender<()>>,
+        )))
         // ── tray icon ─────────────────────────────────────────────────────
         .setup(|app| {
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -145,18 +149,21 @@ pub mod commands {
     pub async fn get_model_status(
         app: AppHandle,
         model: Option<String>,
+        language: Option<String>,
     ) -> Result<ModelStatus, String> {
         use crate::settings::WhisperModel;
 
         let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
+        let saved = settings_state.read().clone();
         let selected = match model.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(name) => WhisperModel::parse(name)?,
-            None => settings_state.read().model.clone(),
+            None => saved.model.clone(),
         };
+        let language = language.unwrap_or(saved.language);
         let (model, size_mb, filename) = (
             format!("{:?}", selected).to_lowercase(),
-            selected.size_mb(),
-            selected.filename().to_string(),
+            selected.size_mb_for(&language),
+            selected.filename_for(&language),
         );
 
         let resource_dir = app
@@ -195,7 +202,10 @@ pub mod commands {
         let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
         let (filename, size_mb) = {
             let s = settings_state.read();
-            (s.model.filename().to_string(), s.model.size_mb())
+            (
+                s.model.filename_for(&s.language).to_string(),
+                s.model.size_mb_for(&s.language),
+            )
         };
 
         let resource_dir = app

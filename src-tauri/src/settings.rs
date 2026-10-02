@@ -35,20 +35,38 @@ impl WhisperModel {
     }
 
     pub fn filename(&self) -> &'static str {
-        match self {
-            WhisperModel::Tiny => "ggml-tiny.en.bin",
-            WhisperModel::Base => "ggml-base.en.bin",
-            WhisperModel::Small => "ggml-small.en.bin",
-            WhisperModel::Medium => "ggml-medium.en.bin",
+        self.filename_for("en")
+    }
+
+    /// English settings use the smaller `.en` models. Hinglish needs the
+    /// multilingual weights so Hindi is actually recognized.
+    pub fn filename_for(&self, language: &str) -> &'static str {
+        let hinglish = matches!(language, "hi" | "hinglish");
+        match (self, hinglish) {
+            (WhisperModel::Tiny, false) => "ggml-tiny.en.bin",
+            (WhisperModel::Tiny, true) => "ggml-tiny.bin",
+            (WhisperModel::Base, false) => "ggml-base.en.bin",
+            (WhisperModel::Base, true) => "ggml-base.bin",
+            (WhisperModel::Small, false) => "ggml-small.en.bin",
+            (WhisperModel::Small, true) => "ggml-small.bin",
+            (WhisperModel::Medium, false) => "ggml-medium.en.bin",
+            (WhisperModel::Medium, true) => "ggml-medium.bin",
         }
     }
 
     pub fn size_mb(&self) -> u32 {
-        match self {
-            WhisperModel::Tiny => 75,
-            WhisperModel::Base => 142,
-            WhisperModel::Small => 466,
-            WhisperModel::Medium => 1457,
+        self.size_mb_for("en")
+    }
+
+    pub fn size_mb_for(&self, language: &str) -> u32 {
+        let hinglish = matches!(language, "hi" | "hinglish");
+        match (self, hinglish) {
+            (WhisperModel::Tiny, _) => 75,
+            (WhisperModel::Base, _) => 142,
+            (WhisperModel::Small, false) => 466,
+            (WhisperModel::Small, true) => 488,
+            (WhisperModel::Medium, false) => 1457,
+            (WhisperModel::Medium, true) => 1533,
         }
     }
 }

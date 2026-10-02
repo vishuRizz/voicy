@@ -23,6 +23,7 @@ function PermissionRow({
   state,
   onGrant,
   hint,
+  deniedLabel = 'Open Settings',
 }: {
   id: string;
   icon: string;
@@ -31,6 +32,7 @@ function PermissionRow({
   state: 'granted' | 'denied' | 'notdetermined';
   onGrant: () => void;
   hint?: string;
+  deniedLabel?: string;
 }) {
   const isGranted = state === 'granted';
   return (
@@ -55,7 +57,7 @@ function PermissionRow({
             onClick={onGrant}
             aria-label={`Grant ${title} permission`}
           >
-            {state === 'denied' ? 'Open Settings' : 'Request Access'}
+            {state === 'denied' ? deniedLabel : 'Request Access'}
           </button>
         )}
       </div>
@@ -94,6 +96,8 @@ export const PermissionOnboarding: React.FC<Props> = ({ status, onComplete }) =>
           description="Required to insert transcribed text into other applications."
           state={status.accessibility}
           onGrant={requestAccessibilityPermission}
+          hint="The Voicy switch that is already on is from a copy you deleted. Select that row, click − to remove it, then click Fix permission again and turn on the new Voicy."
+          deniedLabel="Fix permission"
         />
       </div>
 

@@ -79,7 +79,7 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
         let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
         let s = settings_state.read();
         (
-            s.model.filename().to_string(),
+            s.model.filename_for(&s.language).to_string(),
             s.language.clone(),
             s.max_recording_secs,
             s.clipboard_fallback,
@@ -111,6 +111,11 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
             return;
         }
     };
+    {
+        let mic: tauri::State<std::sync::Arc<parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>>> =
+            app.state();
+        *mic.lock() = Some(audio_handle.stop_sender());
+    }
 
     // Oneshot for key-up / cancel signal.
     let (stop_tx, stop_rx) = oneshot::channel::<bool>();
@@ -242,6 +247,15 @@ fn signal_stop(app: &AppHandle, state: &SharedAppState) {
     let session_id = state.read().current_session_id().unwrap_or_default();
     state.write().begin_finalizing(&session_id);
     info!("Key released — finalizing session {session_id}");
+    {
+        let mic: tauri::State<
+            std::sync::Arc<parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>>,
+        > = app.state();
+        let mut guard = mic.lock();
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
     let _ = app.emit(
         EVENT_STATE,
         StateEvent { session_id, state: "FINALIZING".into() },

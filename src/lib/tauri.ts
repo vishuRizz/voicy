@@ -24,8 +24,11 @@ export const updateSettings = (settings: Settings): Promise<void> =>
 export const cancelSession = (): Promise<void> =>
   invoke<void>('cancel_session');
 
-export const getModelStatus = (model?: string): Promise<ModelStatus> =>
-  invoke<ModelStatus>('get_model_status', model ? { model } : {});
+export const getModelStatus = (model?: string, language?: string): Promise<ModelStatus> =>
+  invoke<ModelStatus>('get_model_status', {
+    ...(model ? { model } : {}),
+    ...(language ? { language } : {}),
+  });
 
 export const startOnboardingCheck = (): Promise<void> =>
   invoke<void>('start_onboarding_check');

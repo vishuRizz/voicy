@@ -125,10 +125,6 @@ fn decode(
     // best_of -1 keeps whisper.cpp's own default.
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: -1 });
 
-    if language != "auto" {
-        params.set_language(Some(language));
-    }
-
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -137,6 +133,17 @@ fn decode(
     params.set_single_segment(false);
     params.set_no_context(true);
     params.set_suppress_blank(true);
+
+    let whisper_lang = match language {
+        "hi" | "hinglish" => "hi",
+        other => other,
+    };
+    if whisper_lang != "auto" {
+        params.set_language(Some(whisper_lang));
+    }
+    // English-only models never learned Hindi. Hinglish uses the multilingual
+    // model with language "hi", then Devanagari is spelled in Latin. Do not
+    // bias the English models with a Hinglish prompt; that made both worse.
 
     // whisper.cpp skips clips shorter than about a second.
     let mut padded = samples.to_vec();
@@ -158,7 +165,161 @@ fn decode(
         .collect::<Vec<_>>()
         .join(" ");
 
-    Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    Ok(romanize_hindi(&text.split_whitespace().collect::<Vec<_>>().join(" ")))
+}
+
+/// If Whisper returns Devanagari, spell it in Latin. Latin text is unchanged.
+fn romanize_hindi(text: &str) -> String {
+    if !text.chars().any(|c| ('\u{0900}'..='\u{097F}').contains(&c)) {
+        return text.to_string();
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut drop_final_a = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(mut base) = consonant_base(c) {
+            i += 1;
+            if i < chars.len() && chars[i] == '\u{093C}' {
+                base = nukta_base(base);
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == '\u{094D}' {
+                out.push_str(base);
+                drop_final_a = false;
+                i += 1;
+                continue;
+            }
+            let mut vowel = "a";
+            if i < chars.len() {
+                if let Some(v) = matra(chars[i]) {
+                    vowel = v;
+                    i += 1;
+                }
+            }
+            if vowel == "aa" && i < chars.len() && (chars[i] == '\u{0908}' || chars[i] == '\u{0907}') {
+                vowel = "ai";
+                i += 1;
+            }
+            out.push_str(base);
+            out.push_str(vowel);
+            drop_final_a = vowel == "a";
+            continue;
+        }
+        if c == ' ' || c == '\n' || c == '\t' || c == '?' || c == '!' || c == ',' || c == '.' || c == '।' {
+            if drop_final_a && out.ends_with('a') {
+                out.pop();
+            }
+            drop_final_a = false;
+        }
+        if let Some(v) = independent_vowel(c) {
+            out.push_str(v);
+            drop_final_a = false;
+            i += 1;
+            continue;
+        }
+        match c {
+            '\u{0902}' | '\u{0901}' => out.push('n'),
+            '\u{0964}' => out.push('.'),
+            '\u{0965}' => out.push_str(".."),
+            _ => out.push(c),
+        }
+        if !('\u{0900}'..='\u{097F}').contains(&c) {
+            drop_final_a = false;
+        }
+        i += 1;
+    }
+    if drop_final_a && out.ends_with('a') {
+        out.pop();
+    }
+    out.replace("kyaa", "kya")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn consonant_base(c: char) -> Option<&'static str> {
+    Some(match c {
+        '\u{0915}' => "k",
+        '\u{0916}' => "kh",
+        '\u{0917}' => "g",
+        '\u{0918}' => "gh",
+        '\u{0919}' => "ng",
+        '\u{091A}' => "ch",
+        '\u{091B}' => "chh",
+        '\u{091C}' => "j",
+        '\u{091D}' => "jh",
+        '\u{091E}' => "ny",
+        '\u{091F}' => "t",
+        '\u{0920}' => "th",
+        '\u{0921}' => "d",
+        '\u{0922}' => "dh",
+        '\u{0923}' => "n",
+        '\u{0924}' => "t",
+        '\u{0925}' => "th",
+        '\u{0926}' => "d",
+        '\u{0927}' => "dh",
+        '\u{0928}' => "n",
+        '\u{092A}' => "p",
+        '\u{092B}' => "ph",
+        '\u{092C}' => "b",
+        '\u{092D}' => "bh",
+        '\u{092E}' => "m",
+        '\u{092F}' => "y",
+        '\u{0930}' => "r",
+        '\u{0932}' => "l",
+        '\u{0935}' => "v",
+        '\u{0936}' => "sh",
+        '\u{0937}' => "sh",
+        '\u{0938}' => "s",
+        '\u{0939}' => "h",
+        _ => return None,
+    })
+}
+
+fn nukta_base(base: &str) -> &'static str {
+    match base {
+        "k" => "q",
+        "kh" => "kh",
+        "g" => "gh",
+        "j" => "z",
+        "ph" => "f",
+        _ => "k",
+    }
+}
+
+fn matra(c: char) -> Option<&'static str> {
+    Some(match c {
+        '\u{093E}' => "aa",
+        '\u{093F}' => "i",
+        '\u{0940}' => "ee",
+        '\u{0941}' => "u",
+        '\u{0942}' => "oo",
+        '\u{0943}' => "ri",
+        '\u{0947}' => "e",
+        '\u{0948}' => "ai",
+        '\u{094B}' => "o",
+        '\u{094C}' => "au",
+        _ => return None,
+    })
+}
+
+fn independent_vowel(c: char) -> Option<&'static str> {
+    Some(match c {
+        '\u{0905}' => "a",
+        '\u{0906}' => "aa",
+        '\u{0907}' => "i",
+        '\u{0908}' => "ee",
+        '\u{0909}' => "u",
+        '\u{090A}' => "oo",
+        '\u{090F}' => "e",
+        '\u{0910}' => "ai",
+        '\u{0913}' => "o",
+        '\u{0914}' => "au",
+        _ => return None,
+    })
 }
 
 pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Result<String> {
@@ -195,6 +356,13 @@ impl TranscriptionCoordinator {
             // Fast enough to feel live, slow enough that each pass can finish.
             preview_interval: Duration::from_millis(450),
         }
+    }
+
+    /// Multilingual Hinglish passes are slow. Live updates would keep the mic
+    /// open and delay paste until a full re-decode finishes, so Hinglish
+    /// transcribes once, when the key is released.
+    fn live_preview(&self) -> bool {
+        !matches!(self.language.as_str(), "hi" | "hinglish")
     }
 
     async fn load_model(&self) -> Result<whisper_rs::WhisperContext> {
@@ -347,7 +515,11 @@ impl TranscriptionCoordinator {
             }
         });
 
-        let mut ticker = interval(self.preview_interval);
+        let mut ticker = interval(if self.live_preview() {
+            self.preview_interval
+        } else {
+            Duration::from_secs(60)
+        });
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut draft = LiveDraft::new();
 
@@ -383,7 +555,7 @@ impl TranscriptionCoordinator {
                 result = &mut stop_rx => {
                     return self.finish(result, &session_id, &pcm, Some(ctx), &mut draft).await;
                 }
-                _ = ticker.tick() => {
+                _ = ticker.tick(), if self.live_preview() => {
                     if !self.state.read().is_listening() {
                         continue;
                     }
@@ -502,4 +674,17 @@ pub async fn cancel_session(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod hinglish_tests {
+    use super::romanize_hindi;
+
+    #[test]
+    fn keeps_english_and_romanizes_hindi() {
+        assert_eq!(
+            romanize_hindi("hello भाई, क्या कर रहे हो तुम?"),
+            "hello bhai, kya kar rahe ho tum?"
+        );
+    }
 }
