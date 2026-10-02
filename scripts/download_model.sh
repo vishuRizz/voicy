@@ -13,18 +13,16 @@ MODEL="${1:-base}"
 MODELS_DIR="$(dirname "$0")/../models"
 BASE_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 
-declare -A FILES=(
-  [tiny]="ggml-tiny.en.bin"
-  [base]="ggml-base.en.bin"
-  [small]="ggml-small.en.bin"
-  [medium]="ggml-medium.en.bin"
-)
-
-FILE="${FILES[$MODEL]:-}"
-if [[ -z "$FILE" ]]; then
-  echo "Unknown model: $MODEL. Choose one of: tiny base small medium"
-  exit 1
-fi
+case "$MODEL" in
+  tiny)   FILE="ggml-tiny.en.bin"   ;;
+  base)   FILE="ggml-base.en.bin"   ;;
+  small)  FILE="ggml-small.en.bin"  ;;
+  medium) FILE="ggml-medium.en.bin" ;;
+  *)
+    echo "Unknown model: $MODEL. Choose one of: tiny base small medium"
+    exit 1
+    ;;
+esac
 
 mkdir -p "$MODELS_DIR"
 TARGET="$MODELS_DIR/$FILE"
