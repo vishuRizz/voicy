@@ -58,6 +58,11 @@
     "macOS": {
       "entitlements": "../entitlements.plist",
       "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
     }
   },
   "plugins": {

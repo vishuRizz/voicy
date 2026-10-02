@@ -209,4 +209,15 @@ npm run tauri -- build --bundles dmg
 
 
 ## windows build
-npm run tauri -- build
+# Prerequisites (run once, on Windows or via cross-compilation):
+# 1. Install Rust: https://rustup.rs
+# 2. Add MSVC target: rustup target add x86_64-pc-windows-msvc
+# 3. Install NSIS: https://nsis.sourceforge.io (for installer bundling)
+# 4. Install WebView2 bootstrapper or ensure it's bundled (handled automatically by tauri.conf.json)
+
+# Build an NSIS installer (.exe) on Windows:
+source ~/.cargo/env
+npm run tauri -- build --bundles nsis
+
+# Build just the .exe binary without installer:
+npm run tauri -- build --bundles app

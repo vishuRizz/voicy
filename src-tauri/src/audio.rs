@@ -111,19 +111,30 @@ fn open_input_stream(tx: Sender<AudioChunk>) -> Result<cpal::Stream> {
 
     let device = host
         .default_input_device()
-        .ok_or_else(|| anyhow!("MIC_NOT_FOUND: No microphone detected. \
-                                On macOS this usually means the app doesn't have \
-                                microphone permission yet. Grant it in \
-                                System Settings → Privacy → Microphone."))?;
+        .ok_or_else(|| {
+            #[cfg(target_os = "macos")]
+            let hint = "On macOS, grant Microphone access in System Settings → Privacy → Microphone.";
+            #[cfg(target_os = "windows")]
+            let hint = "On Windows, grant Microphone access in Settings → Privacy → Microphone.";
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let hint = "Check your system's microphone privacy settings.";
+            anyhow!("MIC_NOT_FOUND: No microphone detected. {hint}")
+        })?;
 
     let dev_name = device.name().unwrap_or_else(|_| "unknown".into());
     info!("Audio device: {dev_name}");
 
     // ── Pick the best available supported config ──────────────────────────
+    #[cfg(target_os = "macos")]
+    let mic_enum_err = "MIC_PERMISSION_DENIED: Could not enumerate input configs. Grant Microphone access in System Settings → Privacy → Microphone.";
+    #[cfg(target_os = "windows")]
+    let mic_enum_err = "MIC_PERMISSION_DENIED: Could not enumerate input configs. Grant Microphone access in Settings → Privacy → Microphone.";
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mic_enum_err = "MIC_PERMISSION_DENIED: Could not enumerate input configs.";
+
     let supported: Vec<_> = device
         .supported_input_configs()
-        .context("MIC_PERMISSION_DENIED: Could not enumerate input configs. \
-                  Grant microphone access in System Settings → Privacy → Microphone.")?
+        .context(mic_enum_err)?
         .collect();
 
     if supported.is_empty() {
@@ -162,8 +173,13 @@ fn open_input_stream(tx: Sender<AudioChunk>) -> Result<cpal::Stream> {
 
     // ── Build stream — handle format + channel conversion inline ──────────
     let build_err = |e: cpal::BuildStreamError| {
-        anyhow!("MIC_PERMISSION_DENIED: Could not open microphone stream: {e}. \
-                 Grant microphone access in System Settings → Privacy → Microphone.")
+        #[cfg(target_os = "macos")]
+        let hint = "Grant Microphone access in System Settings → Privacy → Microphone.";
+        #[cfg(target_os = "windows")]
+        let hint = "Grant Microphone access in Settings → Privacy → Microphone.";
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let hint = "Check your system's microphone privacy settings.";
+        anyhow!("MIC_PERMISSION_DENIED: Could not open microphone stream: {e}. {hint}")
     };
 
     macro_rules! build_stream {

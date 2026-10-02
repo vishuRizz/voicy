@@ -23,8 +23,9 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Whisper.cpp FFI
-whisper-rs = { version = "0.14", features = ["metal"] }
+# Whisper.cpp FFI — platform-specific GPU backends
+# macOS: Metal GPU acceleration (see target deps below)
+# Windows: CPU-only (works everywhere; CUDA can be added later)
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -52,16 +53,30 @@ parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.14", features = ["metal"] }
 core-foundation = "0.9"
 core-graphics = "0.23"
 objc = "0.2"
 block = "0.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+whisper-rs = { version = "0.14" }   # CPU-only; add features=["cuda"] for Nvidia GPU
 windows = { version = "0.58", features = [
+  # Keyboard input: SendInput, VIRTUAL_KEY, VK_*, KEYEVENTF_*
   "Win32_UI_Input_KeyboardAndMouse",
+  # Accessibility (UIA – reserved for future direct-insertion)
   "Win32_UI_Accessibility",
+  # Clipboard: OpenClipboard, SetClipboardData, GetClipboardData, EmptyClipboard, CloseClipboard
   "Win32_System_DataExchange",
+  # Global memory: GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE
+  "Win32_System_Memory",
+  # Low-level keyboard hook: SetWindowsHookExW, WH_KEYBOARD_LL, KBDLLHOOKSTRUCT, CallNextHookEx
+  # Message loop: GetMessageW, TranslateMessage, DispatchMessageW
+  "Win32_UI_WindowsAndMessaging",
+  # Registry: RegOpenKeyExW, RegQueryValueExW (microphone permission check)
+  "Win32_System_Registry",
+  # HWND, HANDLE, LPARAM, LRESULT, WPARAM
+  "Win32_Foundation",
 ] }
 
 [profile.release]
