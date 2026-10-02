@@ -100,47 +100,48 @@ pub async fn insert_text_direct(_text: &str) -> Result<()> {
     Err(anyhow!("INSERTION_UNSUPPORTED: direct insertion not yet implemented"))
 }
 
-/// Write text to clipboard via pbcopy, then send Cmd+V via CoreGraphics.
+/// Write text to clipboard via pbcopy, then send Cmd+V via osascript.
+///
+/// osascript targets the *frontmost* application. Because the overlay window
+/// has `acceptFirstMouse: false` and never takes focus, the app the user was
+/// typing in remains frontmost — so the paste lands in the right place.
+///
+/// Requires: System Settings → Privacy → Accessibility → VoiceKey ✅
 pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
     let previous = read_clipboard();
+
     write_clipboard(text)?;
-    info!("Clipboard fallback: {} chars → Cmd+V", text.len());
-    post_cmd_v();
+
+    // Give the clipboard a moment to settle before pasting.
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+
+    info!("Clipboard paste: {} chars → Cmd+V via osascript", text.len());
+
+    let output = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            r#"tell application "System Events" to keystroke "v" using command down"#,
+        ])
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            let msg = String::from_utf8_lossy(&o.stderr);
+            warn!("osascript paste failed: {msg}");
+        }
+        Err(e) => {
+            warn!("osascript not available: {e}");
+        }
+    }
+
+    // Restore previous clipboard contents after paste has had time to land.
     if let Some(prev) = previous {
         tokio::time::sleep(std::time::Duration::from_millis(350)).await;
         let _ = write_clipboard(&prev);
     }
+
     Ok(())
-}
-
-/// Post a Cmd+V key event pair to the HID event stream.
-fn post_cmd_v() {
-    unsafe {
-        #[link(name = "CoreGraphics", kind = "framework")]
-        extern "C" {
-            fn CGEventCreateKeyboardEvent(
-                source: *const std::ffi::c_void,
-                keycode: u16,
-                key_down: bool,
-            ) -> *mut std::ffi::c_void;
-            fn CGEventSetFlags(event: *mut std::ffi::c_void, flags: u64);
-            fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
-            fn CFRelease(cf: *mut std::ffi::c_void);
-        }
-        const K_CMD: u64 = 0x100000;
-        const V_KEY: u16 = 9;
-        const HID_TAP: u32 = 0;
-
-        let down = CGEventCreateKeyboardEvent(std::ptr::null(), V_KEY, true);
-        CGEventSetFlags(down, K_CMD);
-        CGEventPost(HID_TAP, down);
-        CFRelease(down);
-
-        let up = CGEventCreateKeyboardEvent(std::ptr::null(), V_KEY, false);
-        CGEventSetFlags(up, K_CMD);
-        CGEventPost(HID_TAP, up);
-        CFRelease(up);
-    }
 }
 
 // ── Clipboard helpers ────────────────────────────────────────────────────────
