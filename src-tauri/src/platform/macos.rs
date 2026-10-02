@@ -3,8 +3,10 @@
 
 use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
-use objc::runtime::Class;
+use objc::runtime::{Class, Object};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::OnceLock;
 use tracing::{info, warn};
 
 // ── Process name (dev-mode fix) ───────────────────────────────────────────────
@@ -182,8 +184,11 @@ pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
 
     write_clipboard(text)?;
 
-    // Give the clipboard a moment to settle before pasting.
-    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    // If VoiceKey itself is the front app, Cmd+V would land in this window.
+    // Hide it so the app the user was typing in becomes frontmost.
+    let stepped_aside = step_aside_if_frontmost();
+
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
 
     info!("Clipboard paste: {} chars → Cmd+V via osascript", text.len());
 
@@ -192,26 +197,199 @@ pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
             "-e",
             r#"tell application "System Events" to keystroke "v" using command down"#,
         ])
-        .output();
+        .output()
+        .map_err(|e| anyhow!("osascript not available: {e}"))?;
 
-    match output {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => {
-            let msg = String::from_utf8_lossy(&o.stderr);
-            warn!("osascript paste failed: {msg}");
+    if !output.status.success() {
+        let msg = String::from_utf8_lossy(&output.stderr);
+        if stepped_aside {
+            unhide_without_activating();
         }
-        Err(e) => {
-            warn!("osascript not available: {e}");
-        }
+        return Err(anyhow!(
+            "Paste failed ({msg}). Grant Accessibility to VoiceKey in System Settings → Privacy & Security → Accessibility."
+        ));
     }
 
     // Restore previous clipboard contents after paste has had time to land.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
     if let Some(prev) = previous {
-        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
         let _ = write_clipboard(&prev);
+    }
+    if stepped_aside {
+        unhide_without_activating();
     }
 
     Ok(())
+}
+
+fn step_aside_if_frontmost() -> bool {
+    unsafe {
+        let Some(cls) = Class::get("NSApplication") else { return false };
+        let app: *mut Object = msg_send![cls, sharedApplication];
+        if app.is_null() {
+            return false;
+        }
+        let active: bool = msg_send![app, isActive];
+        if !active {
+            return false;
+        }
+        info!("VoiceKey is frontmost — hiding so paste lands in the previous app");
+        let _: () = msg_send![app, hide: std::ptr::null::<*mut Object>()];
+        true
+    }
+}
+
+fn unhide_without_activating() {
+    unsafe {
+        let Some(cls) = Class::get("NSApplication") else { return };
+        let app: *mut Object = msg_send![cls, sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let _: () = msg_send![app, unhideWithoutActivation];
+    }
+}
+
+// ── Physical key-up (hold-to-talk release) ───────────────────────────────────
+//
+// Carbon's hotkey release is not delivered while another app is focused, so
+// the session never left LISTENING and nothing was pasted.
+
+const OPT: u64 = 1 << 19;
+const CTRL: u64 = 1 << 18;
+const SHIFT: u64 = 1 << 17;
+const CMD: u64 = 1 << 20;
+
+static RELEASE_CB: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+static RELEASE_ARMED: AtomicBool = AtomicBool::new(false);
+static RELEASE_KEY: AtomicU16 = AtomicU16::new(u16::MAX);
+static RELEASE_MODS: AtomicU64 = AtomicU64::new(0);
+
+/// Install a process-lifetime key-up monitor. The callback fires once per
+/// release while a watch is armed. Must be called on the main thread.
+pub fn install_release_watch(on_release: impl Fn() + Send + Sync + 'static) {
+    let _ = RELEASE_CB.set(Box::new(on_release));
+    install_monitors();
+}
+
+/// Start treating a physical release of `shortcut` (e.g. "Alt+Space") as
+/// the end of hold-to-talk.
+pub fn arm_release_watch(shortcut: &str) {
+    let (key, mods) = shortcut_watch(shortcut);
+    RELEASE_KEY.store(key, Ordering::Relaxed);
+    RELEASE_MODS.store(mods, Ordering::Relaxed);
+    RELEASE_ARMED.store(true, Ordering::SeqCst);
+    info!("Watching physical release of {shortcut} (key={key}, mods={mods:#x})");
+}
+
+pub fn clear_release_watch() {
+    RELEASE_ARMED.store(false, Ordering::SeqCst);
+}
+
+fn install_monitors() {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| unsafe {
+        // NSEventTypeKeyUp = 11, NSEventTypeFlagsChanged = 12.
+        let mask: usize = (1 << 11) | (1 << 12);
+        let cls = match Class::get("NSEvent") {
+            Some(c) => c,
+            None => return,
+        };
+
+        let global_block = ConcreteBlock::new(move |event: *mut Object| {
+            note_release_event(event);
+        })
+        .copy();
+        let local_block = ConcreteBlock::new(move |event: *mut Object| -> *mut Object {
+            note_release_event(event);
+            event
+        })
+        .copy();
+
+        let global: *mut Object = msg_send![cls,
+            addGlobalMonitorForEventsMatchingMask: mask
+            handler: &*global_block
+        ];
+        let _local: *mut Object = msg_send![cls,
+            addLocalMonitorForEventsMatchingMask: mask
+            handler: &*local_block
+        ];
+        if global.is_null() {
+            warn!(
+                "Global key-up monitor was not installed. Grant Accessibility \
+                 so releasing the shortcut works while another app is focused."
+            );
+        }
+        // AppKit keeps these for the life of the process.
+        std::mem::forget(global_block);
+        std::mem::forget(local_block);
+    });
+}
+
+fn note_release_event(event: *mut Object) {
+    if event.is_null() || !release_event_matches(event) {
+        return;
+    }
+    // Only the first matching event for this hold ends the session.
+    if !RELEASE_ARMED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(cb) = RELEASE_CB.get() {
+        cb();
+    }
+}
+
+fn release_event_matches(event: *mut Object) -> bool {
+    if !RELEASE_ARMED.load(Ordering::SeqCst) {
+        return false;
+    }
+    unsafe {
+        let code: u16 = msg_send![event, keyCode];
+        let flags: u64 = msg_send![event, modifierFlags];
+        let expected = RELEASE_KEY.load(Ordering::Relaxed);
+        let mods = RELEASE_MODS.load(Ordering::Relaxed);
+        if code == expected {
+            return true;
+        }
+        // Modifier let go (Option, Control, …) even if the letter key is still down.
+        mods != 0 && (flags & mods) != mods
+    }
+}
+
+fn shortcut_watch(shortcut: &str) -> (u16, u64) {
+    let mut mods = 0u64;
+    let mut key = u16::MAX;
+    for part in shortcut.split('+') {
+        match part {
+            "Alt" | "Option" => mods |= OPT,
+            "Ctrl" | "Control" => mods |= CTRL,
+            "Shift" => mods |= SHIFT,
+            "Super" | "Command" | "Cmd" | "Meta" => mods |= CMD,
+            other => {
+                if let Some(code) = mac_key_code(other) {
+                    key = code;
+                }
+            }
+        }
+    }
+    (key, mods)
+}
+
+fn mac_key_code(name: &str) -> Option<u16> {
+    Some(match name {
+        "A" => 0, "S" => 1, "D" => 2, "F" => 3, "H" => 4, "G" => 5,
+        "Z" => 6, "X" => 7, "C" => 8, "V" => 9, "B" => 11, "Q" => 12,
+        "W" => 13, "E" => 14, "R" => 15, "Y" => 16, "T" => 17,
+        "1" => 18, "2" => 19, "3" => 20, "4" => 21, "6" => 22, "5" => 23,
+        "Equal" => 24, "9" => 25, "7" => 26, "Minus" => 27, "8" => 28, "0" => 29,
+        "O" => 31, "U" => 32, "I" => 34, "P" => 35, "Return" | "Enter" => 36,
+        "L" => 37, "J" => 38, "K" => 40, "N" => 45, "M" => 46,
+        "Tab" => 48, "Space" => 49, "Escape" => 53,
+        "F1" => 122, "F2" => 120, "F3" => 99, "F4" => 118, "F5" => 96,
+        "F6" => 97, "F7" => 98, "F8" => 100, "F9" => 101, "F10" => 109,
+        "F11" => 103, "F12" => 111,
+        _ => return None,
+    })
 }
 
 // ── Clipboard helpers ────────────────────────────────────────────────────────

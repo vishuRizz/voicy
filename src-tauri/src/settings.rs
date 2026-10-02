@@ -82,8 +82,7 @@ pub mod commands {
     const SETTINGS_KEY: &str = "settings";
 
     /// Load settings from the persistent store (or defaults).
-    #[tauri::command]
-    pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
+    pub fn load_settings(app: &AppHandle) -> Result<Settings, String> {
         let store = app
             .store(STORE_PATH)
             .map_err(|e| format!("store open failed: {e}"))?;
@@ -94,6 +93,12 @@ pub mod commands {
             .unwrap_or_default();
 
         Ok(settings)
+    }
+
+    /// Load settings from the persistent store (or defaults).
+    #[tauri::command]
+    pub async fn get_settings(app: AppHandle) -> Result<Settings, String> {
+        load_settings(&app)
     }
 
     /// Persist updated settings AND re-register the global shortcut if it changed.

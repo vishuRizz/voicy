@@ -30,6 +30,10 @@ pub async fn insert_text_direct(_text: &str) -> Result<()> {
     Err(anyhow!("INSERTION_UNSUPPORTED: platform not supported"))
 }
 
+pub fn install_release_watch(_on_release: impl Fn() + Send + Sync + 'static) {}
+pub fn arm_release_watch(_shortcut: &str) {}
+pub fn clear_release_watch() {}
+
 pub async fn insert_text_via_clipboard(_text: &str) -> Result<()> {
     Err(anyhow!("INSERTION_UNSUPPORTED: platform not supported"))
 }

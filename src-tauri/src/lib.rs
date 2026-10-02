@@ -48,61 +48,6 @@ pub fn run() {
         .manage(std::sync::Arc::new(parking_lot::Mutex::new(
             None::<tokio::sync::oneshot::Sender<bool>>,
         )))
-        // ── setup ─────────────────────────────────────────────────────────
-        .setup(|app| {
-            // Load persisted settings and apply the saved shortcut.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                match settings::commands::get_settings(handle.clone()).await {
-                    Ok(saved) => {
-                        let settings_state: tauri::State<parking_lot::RwLock<Settings>> =
-                            handle.state();
-                        *settings_state.write() = saved.clone();
-
-                        match hotkey::register_shortcut(&handle, &saved) {
-                            Ok(()) => {
-                                let _ = tauri::Emitter::emit(
-                                    &handle,
-                                    "voicekey://hotkey-ok",
-                                    &saved.shortcut,
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!("Hotkey registration failed on startup: {e}");
-                                let _ = tauri::Emitter::emit(
-                                    &handle,
-                                    "voicekey://hotkey-failed",
-                                    &e.to_string(),
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Could not load settings ({e}), using defaults");
-                        let defaults = Settings::default();
-                        match hotkey::register_shortcut(&handle, &defaults) {
-                            Ok(()) => {
-                                let _ = tauri::Emitter::emit(
-                                    &handle,
-                                    "voicekey://hotkey-ok",
-                                    &defaults.shortcut,
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!("Hotkey registration failed: {e}");
-                                let _ = tauri::Emitter::emit(
-                                    &handle,
-                                    "voicekey://hotkey-failed",
-                                    &e.to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-
-            Ok(())
-        })
         // ── tray icon ─────────────────────────────────────────────────────
         .setup(|app| {
             use tauri::{
@@ -148,8 +93,40 @@ pub fn run() {
             commands::download_model,
             commands::start_onboarding_check,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running VoiceKey");
+        .build(tauri::generate_context!())
+        .expect("error while building VoiceKey")
+        .run(|app_handle, event| {
+            // Register only once the event loop is running. Doing it from
+            // setup (before the loop pumps main-thread tasks) installs a
+            // shortcut that never fires until the user hits Save, which
+            // re-registers after the loop is up.
+            if let tauri::RunEvent::Ready = event {
+                register_startup_shortcut(app_handle);
+            }
+        });
+}
+
+fn register_startup_shortcut(app: &tauri::AppHandle) {
+    let saved = match settings::commands::load_settings(app) {
+        Ok(settings) => settings,
+        Err(e) => {
+            tracing::warn!("Could not load settings ({e}), using defaults");
+            Settings::default()
+        }
+    };
+
+    let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
+    *settings_state.write() = saved.clone();
+
+    match hotkey::register_shortcut(app, &saved) {
+        Ok(()) => {
+            let _ = tauri::Emitter::emit(app, "voicekey://hotkey-ok", &saved.shortcut);
+        }
+        Err(e) => {
+            tracing::error!("Hotkey registration failed on startup: {e}");
+            let _ = tauri::Emitter::emit(app, "voicekey://hotkey-failed", &e.to_string());
+        }
+    }
 }
 
 /// Miscellaneous top-level Tauri commands.

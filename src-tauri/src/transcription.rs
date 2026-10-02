@@ -16,7 +16,7 @@ use crate::{
     errors::VoiceKeyError,
 };
 use anyhow::Result;
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::{select, sync::oneshot, time::interval};
 use tracing::{debug, error, info, warn};
@@ -107,28 +107,41 @@ pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Res
         params.set_language(Some(language));
     }
 
-    // Suppress blank outputs and excessive timestamps in the transcript.
+    // Suppress blank outputs. Timestamps must be off: on a short utterance
+    // whisper.cpp logs "single timestamp ending - skip entire chunk" and
+    // returns no text even though it decoded the words.
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
+    params.set_no_timestamps(true);
+    params.set_single_segment(true);
+    params.set_no_context(true);
     params.set_suppress_blank(true);
 
-    // whisper-rs expects exactly 16 kHz mono f32 — already guaranteed by audio.rs.
+    // whisper.cpp drops or mishandles clips shorter than ~1s.
+    let mut padded = samples.to_vec();
+    let min_samples = TARGET_SAMPLE_RATE as usize;
+    if padded.len() < min_samples {
+        padded.resize(min_samples, 0.0);
+    }
+
     state
-        .full(params, samples)
+        .full(params, &padded)
         .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
 
     let n = state
         .full_n_segments()
         .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
 
-    let text = (0..n)
+        let text = (0..n)
         .filter_map(|i| state.full_get_segment_text(i).ok())
         .collect::<Vec<_>>()
         .join(" ");
 
-    Ok(text.trim().to_string())
+    let text = text.trim().to_string();
+    info!("Transcript: {text:?}");
+    Ok(text)
 }
 
 // ── TranscriptionCoordinator ─────────────────────────────────────────────────
@@ -139,8 +152,6 @@ pub struct TranscriptionCoordinator {
     state: SharedAppState,
     model_path: PathBuf,
     language: String,
-    /// Rolling audio accumulator (all f32 samples from the session).
-    pcm_buffer: Vec<f32>,
     /// Context window for preview inference (samples).
     preview_window: usize,
     /// How often to refresh the preview.
@@ -162,28 +173,31 @@ impl TranscriptionCoordinator {
             state,
             model_path,
             language,
-            pcm_buffer: Vec::new(),
             preview_window: (preview_window_secs * TARGET_SAMPLE_RATE) as usize,
             preview_interval: Duration::from_secs(preview_interval_secs),
         }
     }
 
-    /// Drain incoming audio chunks into the local buffer.
-    fn ingest(&mut self, rx: &AudioReceiver) {
-        while let Ok(chunk) = rx.try_recv() {
-            self.pcm_buffer.extend(chunk);
+    async fn transcribe(&self, samples: Vec<f32>) -> Result<String> {
+        if samples.len() < (TARGET_SAMPLE_RATE / 4) as usize {
+            return Ok(String::new());
         }
+        let model_path = self.model_path.clone();
+        let language = self.language.clone();
+        tauri::async_runtime::spawn_blocking(move || run_whisper(&samples, &model_path, &language))
+            .await
+            .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?
     }
 
     /// Run inference on the most recent preview window and emit a preview event.
-    fn emit_preview(&self, session_id: &str) {
-        let start = self.pcm_buffer.len().saturating_sub(self.preview_window);
-        let window = &self.pcm_buffer[start..];
-
-        match run_whisper(window, &self.model_path, &self.language) {
+    async fn emit_preview(&self, session_id: &str, window: Vec<f32>) {
+        match self.transcribe(window).await {
+            Ok(text) if text.is_empty() => {}
             Ok(text) => {
+                if !self.state.read().is_listening() {
+                    return;
+                }
                 debug!("Preview: {text}");
-                // Update state machine
                 self.state
                     .write()
                     .update_preview(session_id, text.clone());
@@ -204,14 +218,19 @@ impl TranscriptionCoordinator {
     }
 
     /// Run the final full-utterance pass and emit the final event.
-    fn emit_final(&self, session_id: &str) -> Result<String> {
+    async fn emit_final(&self, session_id: &str, samples: Vec<f32>) -> Result<String> {
         info!(
             "Final pass: {} samples ({:.1} s)",
-            self.pcm_buffer.len(),
-            self.pcm_buffer.len() as f32 / TARGET_SAMPLE_RATE as f32
+            samples.len(),
+            samples.len() as f32 / TARGET_SAMPLE_RATE as f32
         );
 
-        let text = run_whisper(&self.pcm_buffer, &self.model_path, &self.language)?;
+        let text = self.transcribe(samples).await?;
+        if text.is_empty() {
+            return Err(anyhow::anyhow!(
+                "ASR_INFERENCE_FAILED: no speech detected"
+            ));
+        }
 
         self.state
             .write()
@@ -235,70 +254,113 @@ impl TranscriptionCoordinator {
     /// * `stop_rx` – signals key-up; next value indicates cancel (true) or
     ///               normal release (false)
     pub async fn run(
-        mut self,
+        self,
         rx: AudioReceiver,
         session_id: String,
         mut stop_rx: oneshot::Receiver<bool>, // true = cancel
     ) {
+        // Drain the mic on its own task so a slow Whisper pass cannot fill
+        // the audio channel and drop the utterance.
+        let pcm = Arc::new(parking_lot::Mutex::new(Vec::<f32>::new()));
+        let pcm_ingest = pcm.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match rx.recv_async().await {
+                    Ok(chunk) => pcm_ingest.lock().extend(chunk),
+                    Err(_) => break,
+                }
+            }
+        });
+
         let mut ticker = interval(self.preview_interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
+            // `biased` so a queued key-up always wins over another preview.
+            // A preview also must not keep running after release: that is
+            // what left the UI stuck on Listening.
             select! {
-                _ = ticker.tick() => {
-                    self.ingest(&rx);
-                    // Only emit preview if still in LISTENING state.
-                    if self.state.read().is_listening() {
-                        self.emit_preview(&session_id);
-                    }
-                }
+                biased;
                 result = &mut stop_rx => {
-                    let cancelled = result.unwrap_or(true);
-                    self.ingest(&rx); // drain remaining
-
-                    if cancelled {
-                        info!("Session {session_id} cancelled");
-                        self.state.write().cancel();
-                        let _ = self.app.emit(
-                            EVENT_STATE,
-                            StateEvent {
-                                session_id: session_id.clone(),
-                                state: "IDLE".into(),
-                            },
-                        );
-                        return;
-                    }
-
-                    // Key released — run final inference.
-                    self.state.write().begin_finalizing(&session_id);
-                    let _ = self.app.emit(
-                        EVENT_STATE,
-                        StateEvent {
-                            session_id: session_id.clone(),
-                            state: "FINALIZING".into(),
-                        },
-                    );
-
-                    match self.emit_final(&session_id) {
-                        Ok(_) => {
-                            // insertion.rs picks up from here via the INSERTING state
-                        }
-                        Err(e) => {
-                            error!("Final inference failed: {e}");
-                            self.state
-                                .write()
-                                .set_error(&session_id, e.to_string());
-                            let _ = self.app.emit(
-                                EVENT_ERROR,
-                                ErrorEvent {
-                                    session_id,
-                                    code: "ASR_INFERENCE_FAILED".into(),
-                                    message: e.to_string(),
-                                },
-                            );
-                        }
-                    }
+                    self.finish(result, &session_id, &pcm).await;
                     return;
                 }
+                _ = ticker.tick() => {
+                    if !self.state.read().is_listening() {
+                        continue;
+                    }
+                    let window = {
+                        let buf = pcm.lock();
+                        let start = buf.len().saturating_sub(self.preview_window);
+                        buf[start..].to_vec()
+                    };
+                    if window.len() < TARGET_SAMPLE_RATE as usize / 2 {
+                        continue;
+                    }
+                    let preview = self.emit_preview(&session_id, window);
+                    tokio::pin!(preview);
+                    select! {
+                        biased;
+                        result = &mut stop_rx => {
+                            drop(preview);
+                            self.finish(result, &session_id, &pcm).await;
+                            return;
+                        }
+                        _ = &mut preview => {}
+                    }
+                }
+            }
+        }
+    }
+
+    async fn finish(
+        &self,
+        result: std::result::Result<bool, tokio::sync::oneshot::error::RecvError>,
+        session_id: &str,
+        pcm: &Arc<parking_lot::Mutex<Vec<f32>>>,
+    ) {
+        // Let the ingest task pull chunks already queued.
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let cancelled = result.unwrap_or(true);
+
+        if cancelled {
+            info!("Session {session_id} cancelled");
+            self.state.write().cancel();
+            let _ = self.app.emit(
+                EVENT_STATE,
+                StateEvent {
+                    session_id: session_id.to_string(),
+                    state: "IDLE".into(),
+                },
+            );
+            return;
+        }
+
+        if self.state.read().is_listening() {
+            self.state.write().begin_finalizing(session_id);
+        }
+        let _ = self.app.emit(
+            EVENT_STATE,
+            StateEvent {
+                session_id: session_id.to_string(),
+                state: "FINALIZING".into(),
+            },
+        );
+
+        let samples = pcm.lock().clone();
+        match self.emit_final(session_id, samples).await {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Final inference failed: {e}");
+                self.state.write().set_error(session_id, e.to_string());
+                let _ = self.app.emit(
+                    EVENT_ERROR,
+                    ErrorEvent {
+                        session_id: session_id.to_string(),
+                        code: "ASR_INFERENCE_FAILED".into(),
+                        message: e.to_string(),
+                    },
+                );
             }
         }
     }

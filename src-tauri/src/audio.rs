@@ -16,8 +16,9 @@ use cpal::{
 };
 use dasp_sample::Sample;
 use flume::{bounded, Receiver, Sender};
-use std::{sync::Arc, time::Duration};
-use tokio::sync::Notify;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 use tracing::{error, info, warn};
 
 /// 16 kHz mono — whisper.cpp's expected input sample rate.
@@ -33,14 +34,22 @@ pub type AudioChunk = Vec<f32>;
 pub type AudioReceiver = Receiver<AudioChunk>;
 
 /// Guard that stops the cpal stream when dropped.
+///
+/// The stream itself lives on the thread that created it (`cpal::Stream` is
+/// not `Send`). `stop` asks that thread to drop it.
 pub struct CaptureHandle {
-    stop_signal: Arc<Notify>,
-    _tx: Sender<AudioChunk>,
+    stop_tx: mpsc::Sender<()>,
 }
 
 impl CaptureHandle {
     pub fn stop(&self) {
-        self.stop_signal.notify_one();
+        let _ = self.stop_tx.send(());
+    }
+}
+
+impl Drop for CaptureHandle {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(());
     }
 }
 
@@ -49,6 +58,48 @@ impl CaptureHandle {
 /// Accepts *any* supported config and downmixes/resamples to 16 kHz mono.
 /// Returns (handle, receiver).
 pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (tx, rx) = bounded::<AudioChunk>(CHANNEL_CAPACITY);
+
+    std::thread::Builder::new()
+        .name("voicekey-audio".into())
+        .spawn(move || {
+            let started = open_input_stream(tx);
+            match started {
+                Ok(stream) => {
+                    let _ = ready_tx.send(Ok(()));
+                    // Block until the session asks us to stop, then drop the stream
+                    // on this same thread.
+                    let _ = stop_rx.recv();
+                    drop(stream);
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                }
+            }
+        })
+        .context("failed to spawn audio thread")?;
+
+    ready_rx
+        .recv()
+        .context("audio thread exited before the microphone opened")??;
+
+    info!("Capture started ✓");
+    Ok((CaptureHandle { stop_tx }, rx))
+}
+
+fn note_dropped_chunk() {
+    static DROPS: AtomicU64 = AtomicU64::new(0);
+    let n = DROPS.fetch_add(1, Ordering::Relaxed);
+    if n % 50 == 0 {
+        warn!("Audio channel full — dropping chunks ({n} so far)");
+    }
+}
+
+/// Open the default input device and return a playing stream.
+/// Must be dropped on the same thread that created it.
+fn open_input_stream(tx: Sender<AudioChunk>) -> Result<cpal::Stream> {
     let host = cpal::default_host();
 
     let device = host
@@ -100,10 +151,7 @@ pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
 
     info!("Capture config: {native_rate} Hz × {channels}ch, format={format:?}");
 
-    let (tx, rx) = bounded::<AudioChunk>(CHANNEL_CAPACITY);
     let tx_clone = tx.clone();
-    let stop_signal = Arc::new(Notify::new());
-    let stop_clone  = stop_signal.clone();
 
     // ── Build stream — handle format + channel conversion inline ──────────
     let build_err = |e: cpal::BuildStreamError| {
@@ -113,6 +161,7 @@ pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
 
     macro_rules! build_stream {
         ($t:ty) => {{
+            let tx_clone = tx_clone.clone();
             device.build_input_stream(
                 &config,
                 move |data: &[$t], _: &cpal::InputCallbackInfo| {
@@ -136,15 +185,11 @@ pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
                     };
 
                     if tx_clone.try_send(resampled).is_err() {
-                        warn!("Audio channel full — dropping chunk");
+                        note_dropped_chunk();
                     }
                 },
-                {
-                    let stop = stop_clone.clone();
-                    move |err| {
-                        error!("Capture stream error: {err}");
-                        stop.notify_one();
-                    }
+                move |err| {
+                    error!("Capture stream error: {err}");
                 },
                 Some(Duration::from_millis(100)),
             )
@@ -174,11 +219,11 @@ pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
                             .collect();
                         let out = if native_rate == TARGET_SAMPLE_RATE { mono }
                                   else { resample(&mono, native_rate, TARGET_SAMPLE_RATE) };
-                        if tx_clone.try_send(out).is_err() {
-                            warn!("Audio channel full — dropping chunk");
+                        if tx.try_send(out).is_err() {
+                            note_dropped_chunk();
                         }
                     },
-                    move |err| { error!("Stream error: {err}"); stop_clone.notify_one(); },
+                    move |err| { error!("Stream error: {err}"); },
                     Some(Duration::from_millis(100)),
                 )
                 .map_err(build_err)?
@@ -186,10 +231,7 @@ pub fn start_capture() -> Result<(CaptureHandle, AudioReceiver)> {
     };
 
     stream.play().map_err(|e| anyhow!("Stream play failed: {e}"))?;
-    std::mem::forget(stream); // kept alive for session duration
-
-    info!("Capture started ✓");
-    Ok((CaptureHandle { stop_signal, _tx: tx }, rx))
+    Ok(stream)
 }
 
 /// Naive linear interpolation resampler.

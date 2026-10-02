@@ -39,6 +39,10 @@ pub async fn insert_text_direct(text: &str) -> Result<()> {
     Err(anyhow!("INSERTION_UNSUPPORTED: Windows direct insertion not yet implemented"))
 }
 
+pub fn install_release_watch(_on_release: impl Fn() + Send + Sync + 'static) {}
+pub fn arm_release_watch(_shortcut: &str) {}
+pub fn clear_release_watch() {}
+
 pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
     // TODO: Use SetClipboardData + SendInput(Ctrl+V).
     Err(anyhow!("INSERTION_UNSUPPORTED: Windows clipboard insertion not yet implemented"))
