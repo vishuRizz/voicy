@@ -45,6 +45,6 @@
     }
   },
   "plugins": {
-    "store": {}
+    "store": null
   }
 }

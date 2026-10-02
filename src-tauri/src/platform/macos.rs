@@ -1,14 +1,12 @@
 // VoiceKey – platform/macos.rs
-// macOS-specific implementations:
-//  - Accessibility / text insertion via CGEvent synthetic key
-//  - Clipboard-paste fallback via NSPasteboard
-//  - Microphone & accessibility permission checks
+// macOS-specific implementations.
 
 use anyhow::{anyhow, Result};
+use objc::runtime::Class;
 use serde::Serialize;
 use tracing::{info, warn};
 
-// ── Permissions ──────────────────────────────────────────────────────────────
+// ── Permission types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PermissionStatus {
@@ -24,27 +22,71 @@ pub enum PermissionState {
     NotDetermined,
 }
 
-/// Check current microphone and accessibility permissions.
-///
-/// In production: use AVCaptureDevice.authorizationStatus for microphone and
-/// AXIsProcessTrustedWithOptions for accessibility.  The stub below always
-/// returns `NotDetermined` so the onboarding UI can guide the user.
-pub async fn check_permissions() -> PermissionStatus {
-    // TODO: replace stubs with real macOS API calls via objc crate.
-    PermissionStatus {
-        microphone: PermissionState::NotDetermined,
-        accessibility: PermissionState::NotDetermined,
+// ── AVFoundation microphone permission check ─────────────────────────────────
+
+/// AVAuthorizationStatus: 0=NotDetermined, 1=Restricted, 2=Denied, 3=Authorized
+fn avfoundation_mic_status() -> PermissionState {
+    unsafe {
+        let cls = match Class::get("AVCaptureDevice") {
+            Some(c) => c,
+            None => return PermissionState::NotDetermined,
+        };
+        let nsstring_cls = match Class::get("NSString") {
+            Some(c) => c,
+            None => return PermissionState::NotDetermined,
+        };
+
+        // Build NSString for "soun" (AVMediaTypeAudio)
+        let av_audio = "soun";
+        let alloc: *mut objc::runtime::Object = msg_send![nsstring_cls, alloc];
+        let ns_media_type: *mut objc::runtime::Object = msg_send![alloc,
+            initWithBytes: av_audio.as_ptr()
+            length: av_audio.len()
+            encoding: 4u64   // NSUTF8StringEncoding
+        ];
+
+        let status: i64 = msg_send![cls, authorizationStatusForMediaType: ns_media_type];
+        let _: () = msg_send![ns_media_type, release];
+
+        match status {
+            3 => PermissionState::Granted,
+            1 | 2 => PermissionState::Denied,
+            _ => PermissionState::NotDetermined,
+        }
     }
 }
 
-/// Open System Settings → Privacy → Microphone (macOS 13+).
+// ── Accessibility ────────────────────────────────────────────────────────────
+
+fn ax_is_trusted() -> bool {
+    unsafe {
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        AXIsProcessTrusted()
+    }
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
+pub async fn check_permissions() -> PermissionStatus {
+    PermissionStatus {
+        microphone: avfoundation_mic_status(),
+        accessibility: if ax_is_trusted() {
+            PermissionState::Granted
+        } else {
+            PermissionState::Denied
+        },
+    }
+}
+
 pub async fn open_microphone_settings() {
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
         .spawn();
 }
 
-/// Open System Settings → Privacy → Accessibility.
 pub async fn open_accessibility_settings() {
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
@@ -53,49 +95,55 @@ pub async fn open_accessibility_settings() {
 
 // ── Text insertion ───────────────────────────────────────────────────────────
 
-/// Attempt direct text insertion using macOS Accessibility APIs (CGEvent
-/// synthetic key + AXUIElement setValue).
-///
-/// In production: use the `accessibility` or `core-graphics` crate to post
-/// key events or set the focused element's AXValue directly.
 pub async fn insert_text_direct(_text: &str) -> Result<()> {
-    // TODO: replace with real AX/CGEvent insertion.
-    // Example approach:
-    //   1. kAXFocusedUIElementAttribute → focused element
-    //   2. AXUIElementSetAttributeValue(el, kAXValueAttribute, text)
-    //   OR
-    //   1. CGEventCreateKeyboardEvent per Unicode scalar
-    //   2. CGEventPost(kCGHIDEventTap, event)
-    warn!("insert_text_direct: stub — using clipboard fallback");
+    warn!("insert_text_direct: not yet implemented — using clipboard fallback");
     Err(anyhow!("INSERTION_UNSUPPORTED: direct insertion not yet implemented"))
 }
 
-/// Clipboard-paste fallback: place text on NSPasteboard and send Cmd+V.
-///
-/// Saves and restores the previous clipboard contents where possible.
+/// Write text to clipboard via pbcopy, then send Cmd+V via CoreGraphics.
 pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
-    // Step 1: Save current clipboard (best-effort; may fail for complex types).
     let previous = read_clipboard();
-
-    // Step 2: Write text to clipboard.
     write_clipboard(text)?;
-
-    // Step 3: Simulate Cmd+V to the previously focused app.
-    // In production: use CGEventCreateKeyboardEvent(Cmd+V) posted to kCGSessionEventTap.
-    // Simplified here — in tests run `pbpaste` to verify.
-    info!("Clipboard fallback: wrote {} chars, sending Cmd+V stub", text.len());
-
-    // Step 4: Restore clipboard (best-effort).
+    info!("Clipboard fallback: {} chars → Cmd+V", text.len());
+    post_cmd_v();
     if let Some(prev) = previous {
-        // Small delay to allow the paste to complete before restoring.
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(350)).await;
         let _ = write_clipboard(&prev);
     }
-
     Ok(())
 }
 
-// ── Clipboard helpers (pbcopy / pbpaste for now) ─────────────────────────────
+/// Post a Cmd+V key event pair to the HID event stream.
+fn post_cmd_v() {
+    unsafe {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGEventCreateKeyboardEvent(
+                source: *const std::ffi::c_void,
+                keycode: u16,
+                key_down: bool,
+            ) -> *mut std::ffi::c_void;
+            fn CGEventSetFlags(event: *mut std::ffi::c_void, flags: u64);
+            fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
+            fn CFRelease(cf: *mut std::ffi::c_void);
+        }
+        const K_CMD: u64 = 0x100000;
+        const V_KEY: u16 = 9;
+        const HID_TAP: u32 = 0;
+
+        let down = CGEventCreateKeyboardEvent(std::ptr::null(), V_KEY, true);
+        CGEventSetFlags(down, K_CMD);
+        CGEventPost(HID_TAP, down);
+        CFRelease(down);
+
+        let up = CGEventCreateKeyboardEvent(std::ptr::null(), V_KEY, false);
+        CGEventSetFlags(up, K_CMD);
+        CGEventPost(HID_TAP, up);
+        CFRelease(up);
+    }
+}
+
+// ── Clipboard helpers ────────────────────────────────────────────────────────
 
 fn read_clipboard() -> Option<String> {
     std::process::Command::new("pbpaste")
@@ -117,7 +165,7 @@ fn write_clipboard(text: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Permission Tauri command ─────────────────────────────────────────────────
+// ── Tauri commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn get_permission_status() -> PermissionStatus {
@@ -126,6 +174,9 @@ pub async fn get_permission_status() -> PermissionStatus {
 
 #[tauri::command]
 pub async fn request_microphone_permission() {
+    // Opening System Settings triggers a permission check for the calling process.
+    // The first time cpal actually opens the mic, macOS shows the system prompt.
+    // We open the settings pane so users see the toggle the moment it appears.
     open_microphone_settings().await;
 }
 

@@ -7,6 +7,42 @@ Hold a configurable global shortcut, see a live provisional transcript, release 
 
 ---
 
+## Running the app
+
+### Start
+```sh
+cd /Users/vishupratap/Movies/voice-key
+source ~/.cargo/env          # make cargo available
+export PATH="/opt/homebrew/bin:$PATH"   # make cmake/brew tools available
+npm run tauri -- dev
+```
+
+The first build takes ~60 s (compiling whisper.cpp). Subsequent runs take ~5–8 s.
+
+### Open the window
+VoiceKey lives in your **menu bar** (top-right of your screen).  
+- **Menu bar icon** → click it → **Settings…** to open the main window  
+- If the window doesn't appear, check if it's hidden behind other windows (Cmd+Tab)
+
+### Grant permissions (first run only)
+1. Press your hotkey (`Option+Space`) — macOS shows a microphone prompt → **Allow**
+2. Click **Allow Accessibility** in the onboarding screen → enable VoiceKey in System Settings → Accessibility
+
+### Dictate
+1. Hold `Option+Space` (or your configured shortcut)
+2. Speak — a live preview appears in the overlay
+3. Release → text is inserted into whatever app you were using
+
+### Stop / quit
+```sh
+# From the menu bar:  click icon → Quit VoiceKey
+
+# Or from terminal (kills dev server + app):
+pkill -f "target/debug/voicekey"; pkill -f "tauri dev"; pkill -f vite
+```
+
+---
+
 ## Features
 
 | Feature | Status |

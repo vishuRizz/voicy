@@ -1,6 +1,10 @@
 // VoiceKey – lib.rs
 // Library crate root (required by Tauri 2's mobile-compatible architecture).
 
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 pub mod app_state;
 pub mod audio;
 pub mod errors;

@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import type { Settings as SettingsType, WhisperModel, ModelStatus } from '../types';
 import { getModelStatus } from '../lib/tauri';
+import myIcon from '../assets/myicon.png';
 
 const MODEL_OPTIONS: { value: WhisperModel; label: string; sizeMb: number }[] = [
   { value: 'tiny', label: 'Tiny (~75 MB)', sizeMb: 75 },
@@ -57,7 +58,13 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
 
   return (
     <div id="settings-panel" className="settings-panel">
-      <h2 className="settings-title">Settings</h2>
+      <div className="settings-header">
+        <img src={myIcon} alt="VoiceKey" className="settings-logo" />
+        <div>
+          <h2 className="settings-title">VoiceKey</h2>
+          <p className="settings-subtitle">Settings</p>
+        </div>
+      </div>
 
       {/* ── Shortcut ──────────────────────────────────────────────────── */}
       <section className="settings-section">

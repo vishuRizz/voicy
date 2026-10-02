@@ -4,6 +4,7 @@
 
 import React from 'react';
 import type { PermissionStatus } from '../types';
+import myIcon from '../assets/myicon.png';
 import {
   requestMicrophonePermission,
   requestAccessibilityPermission,
@@ -67,7 +68,7 @@ export const PermissionOnboarding: React.FC<Props> = ({ status, onComplete }) =>
   return (
     <div id="permission-onboarding" className="onboarding-container">
       <div className="onboarding-header">
-        <div className="onboarding-logo">🎙️</div>
+        <img src={myIcon} alt="VoiceKey" className="onboarding-logo-img" />
         <h1 className="onboarding-title">Welcome to VoiceKey</h1>
         <p className="onboarding-subtitle">
           VoiceKey needs two permissions to work. Your audio is processed

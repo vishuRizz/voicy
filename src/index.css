@@ -441,6 +441,15 @@ body {
   filter: drop-shadow(0 0 16px rgba(232, 68, 90, 0.4));
 }
 
+.onboarding-logo-img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  border-radius: 16px;
+  filter: drop-shadow(0 4px 20px rgba(232, 68, 90, 0.35));
+  flex-shrink: 0;
+}
+
 .onboarding-title {
   font-size: 22px;
   font-weight: 700;
@@ -543,13 +552,35 @@ body {
   padding-bottom: var(--space-xl);
 }
 
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 12px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 12px rgba(232, 68, 90, 0.3));
+}
+
 .settings-title {
-  font-size: 13px;
+  font-size: 17px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
+  color: var(--color-text-primary);
+  letter-spacing: -0.3px;
+  margin: 0;
+}
+
+.settings-subtitle {
+  font-size: 12px;
   color: var(--color-text-tertiary);
-  padding: var(--space-lg) var(--space-lg) var(--space-sm);
+  margin: 2px 0 0;
 }
 
 .settings-section {
