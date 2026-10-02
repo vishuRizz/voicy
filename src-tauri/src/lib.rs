@@ -13,7 +13,6 @@ pub mod transcription;
 use app_state::AppState;
 use settings::Settings;
 use tauri::Manager;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use tracing::info;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -116,10 +115,9 @@ pub fn run() {
 
 /// Miscellaneous top-level Tauri commands.
 pub mod commands {
-    use crate::settings::{Settings, WhisperModel};
+    use crate::settings::Settings;
     use serde::Serialize;
-    use std::path::PathBuf;
-    use tauri::{AppHandle, Manager};
+    use tauri::{AppHandle, Emitter, Manager};
 
     #[derive(Serialize)]
     pub struct ModelStatus {
@@ -165,7 +163,7 @@ pub mod commands {
     #[tauri::command]
     pub async fn start_onboarding_check(app: AppHandle) -> Result<(), String> {
         let status = crate::platform::check_permissions().await;
-        let _ = app.emit("permissions://status", &status);
+        let _ = Emitter::emit(&app, "permissions://status", &status);
         Ok(())
     }
 }

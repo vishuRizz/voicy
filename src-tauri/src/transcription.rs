@@ -10,14 +10,14 @@
 //  5. Stale results identified by session_id are silently dropped.
 
 use crate::{
-    app_state::{SessionState, SharedAppState},
-    audio::{AudioChunk, AudioReceiver, TARGET_SAMPLE_RATE},
+    app_state::SharedAppState,
+    audio::AudioReceiver,
+    audio::TARGET_SAMPLE_RATE,
     errors::VoiceKeyError,
 };
 use anyhow::Result;
-use flume::Sender;
 use std::{path::PathBuf, time::Duration};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::{select, sync::oneshot, time::interval};
 use tracing::{debug, error, info, warn};
 

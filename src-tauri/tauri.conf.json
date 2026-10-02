@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -22,27 +23,11 @@
         "visible": true,
         "decorations": true,
         "center": true
-      },
-      {
-        "label": "overlay",
-        "title": "VoiceKey Overlay",
-        "width": 340,
-        "height": 120,
-        "resizable": false,
-        "fullscreen": false,
-        "visible": false,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "transparent": true,
-        "acceptFirstMouse": false,
-        "url": "/overlay.html"
       }
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self'"
-    },
-    "macOSPrivateApi": true
+    }
   },
   "bundle": {
     "active": true,
@@ -55,15 +40,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": "entitlements.plist",
-      "exceptionDomain": "",
-      "signingIdentity": null,
-      "minimumSystemVersion": "13.0",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "VoiceKey needs microphone access to capture your speech for local transcription.",
-        "NSAccessibilityUsageDescription": "VoiceKey needs Accessibility access to insert transcribed text into other applications.",
-        "ITSAppUsesNonExemptEncryption": false
-      }
+      "entitlements": "../entitlements.plist",
+      "minimumSystemVersion": "13.0"
     }
   },
   "plugins": {
