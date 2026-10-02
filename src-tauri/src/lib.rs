@@ -35,9 +35,10 @@ pub fn run() {
         .manage(AppState::new_shared())
         .manage(parking_lot::RwLock::new(Settings::default()))
         // Cell for passing the stop-sender from key-down to key-up handler.
-        .manage(parking_lot::Mutex::new(
+        // Wrapped in Arc so the timer task can clone a reference to it.
+        .manage(std::sync::Arc::new(parking_lot::Mutex::new(
             None::<tokio::sync::oneshot::Sender<bool>>,
-        ))
+        )))
         // ── setup ─────────────────────────────────────────────────────────
         .setup(|app| {
             // Load persisted settings and apply the saved shortcut.

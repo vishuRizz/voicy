@@ -75,7 +75,7 @@ impl Default for Settings {
 /// Tauri commands exposed to the UI.
 pub mod commands {
     use super::Settings;
-    use tauri::{AppHandle, Manager};
+    use tauri::AppHandle;
     use tauri_plugin_store::StoreExt;
 
     const STORE_PATH: &str = "settings.json";

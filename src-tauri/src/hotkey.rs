@@ -9,7 +9,7 @@ use crate::{audio, errors::VoiceKeyError, insertion, settings::Settings, transcr
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tokio::sync::oneshot;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Register the global hold-to-talk shortcut.
 pub fn register_shortcut(app: &AppHandle, settings: &Settings) -> Result<(), VoiceKeyError> {
@@ -85,7 +85,7 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
     // Oneshot for key-up / cancel signal.
     let (stop_tx, stop_rx) = oneshot::channel::<bool>();
     {
-        let stop_cell: tauri::State<parking_lot::Mutex<Option<oneshot::Sender<bool>>>> =
+        let stop_cell: tauri::State<std::sync::Arc<parking_lot::Mutex<Option<oneshot::Sender<bool>>>>> =
             app.state();
         *stop_cell.lock() = Some(stop_tx);
     }
@@ -93,6 +93,14 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
     let app_clone = app.clone();
     let state_clone = state.clone();
     let session_id_clone = session_id.clone();
+
+    // Extract stop_arc BEFORE the spawn so we don't borrow app_clone inside it.
+    let stop_arc_for_timer: Option<std::sync::Arc<parking_lot::Mutex<Option<oneshot::Sender<bool>>>>> = if max_secs > 0 {
+        let s: tauri::State<std::sync::Arc<parking_lot::Mutex<Option<oneshot::Sender<bool>>>>> = app.state();
+        Some(std::sync::Arc::clone(s.inner()))
+    } else {
+        None
+    };
 
     tokio::spawn(async move {
         // Resolve model path.
@@ -122,16 +130,10 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
         );
 
         // Optional max-recording-duration auto-finalize.
-        if max_secs > 0 {
-            let app_t = app_clone.clone();
+        if let Some(stop_arc) = stop_arc_for_timer {
             let state_t = state_clone.clone();
             let sid_t = session_id_clone.clone();
-            // Extract Arc from State before the async block to avoid borrow issues.
-            let stop_arc = {
-                let s: tauri::State<parking_lot::Mutex<Option<oneshot::Sender<bool>>>> =
-                    app_t.state();
-                s.inner().clone()
-            };
+            let app_for_timer = app_clone.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(max_secs as u64)).await;
                 if state_t.read().is_listening() {
@@ -139,13 +141,14 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
                     if let Some(tx) = stop_arc.lock().take() {
                         let _ = tx.send(false);
                     }
-                    let _ = app_t.emit(
+                    let _ = app_for_timer.emit(
                         EVENT_STATE,
                         StateEvent { session_id: sid_t, state: "FINALIZING".into() },
                     );
                 }
             });
         }
+
 
         coordinator.run(audio_rx, session_id_clone.clone(), stop_rx).await;
 
@@ -198,10 +201,13 @@ fn on_key_up(app: AppHandle, state: SharedAppState) {
     if !matches!(state.read().current_state(), SessionState::Listening) {
         return;
     }
+    // Use a named binding so the MutexGuard drops before end of block.
     let tx = {
-        let stop_cell: tauri::State<parking_lot::Mutex<Option<oneshot::Sender<bool>>>> =
+        let stop_cell: tauri::State<std::sync::Arc<parking_lot::Mutex<Option<oneshot::Sender<bool>>>>> =
             app.state();
-        stop_cell.lock().take()
+        let mut guard = stop_cell.lock();
+        let x = guard.take();
+        x
     };
     if let Some(tx) = tx {
         let _ = tx.send(false);

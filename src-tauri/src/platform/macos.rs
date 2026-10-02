@@ -58,7 +58,7 @@ pub async fn open_accessibility_settings() {
 ///
 /// In production: use the `accessibility` or `core-graphics` crate to post
 /// key events or set the focused element's AXValue directly.
-pub async fn insert_text_direct(text: &str) -> Result<()> {
+pub async fn insert_text_direct(_text: &str) -> Result<()> {
     // TODO: replace with real AX/CGEvent insertion.
     // Example approach:
     //   1. kAXFocusedUIElementAttribute → focused element
