@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+src-tauri/target/
+models/*.bin
+.DS_Store
