@@ -180,9 +180,9 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
         }
 
 
-        coordinator.run(audio_rx, session_id_clone.clone(), stop_rx).await;
+        let already_in_field = coordinator.run(audio_rx, session_id_clone.clone(), stop_rx).await;
 
-        // Attempt text insertion if in INSERTING state.
+        // Attempt text insertion if it wasn't streamed in while listening.
         let final_text = {
             let s = state_clone.read();
             s.session.as_ref().and_then(|sess| {
@@ -194,7 +194,7 @@ fn on_key_down(app: AppHandle, state: SharedAppState) {
             })
         };
 
-        if let Some(text) = final_text {
+        if let Some(text) = final_text.filter(|_| !already_in_field) {
             let _ = app_clone.emit(
                 EVENT_STATE,
                 StateEvent { session_id: session_id_clone.clone(), state: "INSERTING".into() },

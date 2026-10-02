@@ -39,6 +39,10 @@ pub async fn insert_text_direct(text: &str) -> Result<()> {
     Err(anyhow!("INSERTION_UNSUPPORTED: Windows direct insertion not yet implemented"))
 }
 
+pub fn apply_text_edit(_delete_chars: usize, _insert: &str) -> Result<()> {
+    Err(anyhow!("INSERTION_UNSUPPORTED: live insertion is not implemented on Windows"))
+}
+
 pub fn install_release_watch(_on_release: impl Fn() + Send + Sync + 'static) {}
 pub fn arm_release_watch(_shortcut: &str) {}
 pub fn clear_release_watch() {}

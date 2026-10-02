@@ -39,7 +39,7 @@ export const ListeningOverlay: React.FC<Props> = ({
       className={`overlay ${uiState}`}
       role="status"
       aria-live="polite"
-      aria-label={`VoiceKey: ${STATE_LABELS[uiState]}`}
+      aria-label={`Voicy: ${STATE_LABELS[uiState]}`}
       style={{ display: isActive ? 'flex' : 'none' }}
     >
       {/* Pulse indicator */}
@@ -50,8 +50,7 @@ export const ListeningOverlay: React.FC<Props> = ({
 
       {/* Preview text */}
       {uiState === 'listening' && preview && (
-        <p className="overlay-preview" aria-label="Provisional transcript">
-          <span className="provisional-badge">provisional</span>
+        <p className="overlay-preview" aria-label="Live transcript">
           {preview}
         </p>
       )}

@@ -14,6 +14,7 @@ use crate::{
     audio::AudioReceiver,
     audio::TARGET_SAMPLE_RATE,
     errors::VoiceKeyError,
+    insertion::LiveDraft,
 };
 use anyhow::Result;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -83,18 +84,22 @@ pub fn model_path(app: &AppHandle, filename: &str) -> Result<PathBuf, VoiceKeyEr
 /// * `samples` – f32 PCM at 16 kHz, mono
 /// * `model_path` – path to the `.bin` model file
 /// * `language` – BCP-47 code or "auto"
-pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Result<String> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+fn load_whisper(model_path: &PathBuf) -> Result<whisper_rs::WhisperContext> {
+    use whisper_rs::{WhisperContext, WhisperContextParameters};
 
     let model_str = model_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("ASR_MODEL_MISSING: invalid model path"))?;
+    WhisperContext::new_with_params(model_str, WhisperContextParameters::default())
+        .map_err(|e| anyhow::anyhow!("ASR_MODEL_MISSING: {e}"))
+}
 
-    // Load the model (whisper-rs caches the context internally on repeated calls
-    // to the same path in the same process; a persistent-context optimisation
-    // can be added once the session coordinator owns the WhisperContext).
-    let ctx = WhisperContext::new_with_params(model_str, WhisperContextParameters::default())
-        .map_err(|e| anyhow::anyhow!("ASR_MODEL_MISSING: {e}"))?;
+fn transcribe_with(
+    ctx: &whisper_rs::WhisperContext,
+    samples: &[f32],
+    language: &str,
+) -> Result<String> {
+    use whisper_rs::{FullParams, SamplingStrategy};
 
     let mut state = ctx
         .create_state()
@@ -102,14 +107,12 @@ pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Res
 
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
 
-    // Language: "auto" maps to None (auto-detection); everything else is a BCP-47 code.
     if language != "auto" {
         params.set_language(Some(language));
     }
 
-    // Suppress blank outputs. Timestamps must be off: on a short utterance
-    // whisper.cpp logs "single timestamp ending - skip entire chunk" and
-    // returns no text even though it decoded the words.
+    // Timestamps must be off: on a short utterance whisper.cpp logs
+    // "single timestamp ending - skip entire chunk" and returns no text.
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -119,7 +122,7 @@ pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Res
     params.set_no_context(true);
     params.set_suppress_blank(true);
 
-    // whisper.cpp drops or mishandles clips shorter than ~1s.
+    // whisper.cpp mishandles clips shorter than ~1s.
     let mut padded = samples.to_vec();
     let min_samples = TARGET_SAMPLE_RATE as usize;
     if padded.len() < min_samples {
@@ -134,12 +137,17 @@ pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Res
         .full_n_segments()
         .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?;
 
-        let text = (0..n)
+    let text = (0..n)
         .filter_map(|i| state.full_get_segment_text(i).ok())
         .collect::<Vec<_>>()
         .join(" ");
 
-    let text = text.trim().to_string();
+    Ok(text.trim().to_string())
+}
+
+pub fn run_whisper(samples: &[f32], model_path: &PathBuf, language: &str) -> Result<String> {
+    let ctx = load_whisper(model_path)?;
+    let text = transcribe_with(&ctx, samples, language)?;
     info!("Transcript: {text:?}");
     Ok(text)
 }
@@ -152,9 +160,7 @@ pub struct TranscriptionCoordinator {
     state: SharedAppState,
     model_path: PathBuf,
     language: String,
-    /// Context window for preview inference (samples).
-    preview_window: usize,
-    /// How often to refresh the preview.
+    /// How often to refresh the live transcript.
     preview_interval: Duration,
 }
 
@@ -165,73 +171,130 @@ impl TranscriptionCoordinator {
         model_path: PathBuf,
         language: String,
     ) -> Self {
-        let preview_window_secs = 5u32; // §15: ~4–6 s
-        let preview_interval_secs = 1u64; // §15: ~1–2 s
-
         TranscriptionCoordinator {
             app,
             state,
             model_path,
             language,
-            preview_window: (preview_window_secs * TARGET_SAMPLE_RATE) as usize,
-            preview_interval: Duration::from_secs(preview_interval_secs),
+            // Fast enough to feel live, slow enough that each pass can finish.
+            preview_interval: Duration::from_millis(450),
         }
     }
 
-    async fn transcribe(&self, samples: Vec<f32>) -> Result<String> {
-        if samples.len() < (TARGET_SAMPLE_RATE / 4) as usize {
-            return Ok(String::new());
-        }
+    async fn load_model(&self) -> Result<whisper_rs::WhisperContext> {
         let model_path = self.model_path.clone();
-        let language = self.language.clone();
-        tauri::async_runtime::spawn_blocking(move || run_whisper(&samples, &model_path, &language))
+        tauri::async_runtime::spawn_blocking(move || load_whisper(&model_path))
             .await
-            .map_err(|e| anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}"))?
+            .map_err(|e| anyhow::anyhow!("ASR_MODEL_MISSING: {e}"))?
     }
 
-    /// Run inference on the most recent preview window and emit a preview event.
-    async fn emit_preview(&self, session_id: &str, window: Vec<f32>) {
-        match self.transcribe(window).await {
-            Ok(text) if text.is_empty() => {}
-            Ok(text) => {
-                if !self.state.read().is_listening() {
-                    return;
-                }
-                debug!("Preview: {text}");
-                self.state
-                    .write()
-                    .update_preview(session_id, text.clone());
-
-                let _ = self.app.emit(
-                    EVENT_PREVIEW,
-                    PreviewEvent {
-                        session_id: session_id.to_string(),
-                        text,
-                        is_provisional: true,
+    /// Transcribe without reloading the model. Hands the context back so the
+    /// next pass stays fast.
+    async fn transcribe(
+        &self,
+        ctx: whisper_rs::WhisperContext,
+        samples: Vec<f32>,
+    ) -> (whisper_rs::WhisperContext, Result<String>) {
+        if samples.len() < (TARGET_SAMPLE_RATE / 4) as usize {
+            return (ctx, Ok(String::new()));
+        }
+        let language = self.language.clone();
+        match tauri::async_runtime::spawn_blocking(move || {
+            let text = transcribe_with(&ctx, &samples, &language);
+            (ctx, text)
+        })
+        .await
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                let ctx = match self.load_model().await {
+                    Ok(ctx) => ctx,
+                    Err(_) => match self.load_model().await {
+                        Ok(ctx) => ctx,
+                        Err(err) => {
+                            error!("Whisper context lost and reload failed: {err}");
+                            // Blocking reload so the session can still finish.
+                            match load_whisper(&self.model_path) {
+                                Ok(ctx) => ctx,
+                                Err(err2) => {
+                                    error!("Whisper reload failed: {err2}");
+                                    return (load_whisper(&self.model_path).unwrap_or_else(|_| {
+                                        panic!("whisper model unusable: {e}");
+                                    }), Err(anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}")));
+                                }
+                            }
+                        }
                     },
-                );
+                };
+                (ctx, Err(anyhow::anyhow!("ASR_INFERENCE_FAILED: {e}")))
             }
+        }
+    }
+
+    /// Push a live hypothesis into the focused field and the overlay.
+    async fn emit_preview(
+        &self,
+        ctx: whisper_rs::WhisperContext,
+        session_id: &str,
+        samples: Vec<f32>,
+        draft: &mut LiveDraft,
+    ) -> whisper_rs::WhisperContext {
+        let (ctx, text) = self.transcribe(ctx, samples).await;
+        let text = match text {
+            Ok(text) if !text.is_empty() => text,
+            Ok(_) => return ctx,
             Err(e) => {
                 warn!("Preview inference error: {e}");
+                return ctx;
+            }
+        };
+        if !self.state.read().is_listening() {
+            return ctx;
+        }
+        debug!("Live: {text}");
+        self.state.write().update_preview(session_id, text.clone());
+        let _ = self.app.emit(
+            EVENT_PREVIEW,
+            PreviewEvent {
+                session_id: session_id.to_string(),
+                text: text.clone(),
+                is_provisional: true,
+            },
+        );
+        if !draft.off() {
+            if let Err(e) = draft.sync(&text).await {
+                warn!("Live insert stopped, will paste on release: {e}");
             }
         }
+        ctx
     }
 
     /// Run the final full-utterance pass and emit the final event.
-    async fn emit_final(&self, session_id: &str, samples: Vec<f32>) -> Result<String> {
+    async fn emit_final(
+        &self,
+        ctx: whisper_rs::WhisperContext,
+        session_id: &str,
+        samples: Vec<f32>,
+    ) -> (whisper_rs::WhisperContext, Result<String>) {
         info!(
             "Final pass: {} samples ({:.1} s)",
             samples.len(),
             samples.len() as f32 / TARGET_SAMPLE_RATE as f32
         );
 
-        let text = self.transcribe(samples).await?;
-        if text.is_empty() {
-            return Err(anyhow::anyhow!(
-                "ASR_INFERENCE_FAILED: no speech detected"
-            ));
-        }
+        let (ctx, text) = self.transcribe(ctx, samples).await;
+        let text = match text {
+            Ok(text) if !text.is_empty() => text,
+            Ok(_) => {
+                return (
+                    ctx,
+                    Err(anyhow::anyhow!("ASR_INFERENCE_FAILED: no speech detected")),
+                );
+            }
+            Err(e) => return (ctx, Err(e)),
+        };
 
+        info!("Transcript: {text:?}");
         self.state
             .write()
             .set_final_text(session_id, text.clone());
@@ -244,21 +307,17 @@ impl TranscriptionCoordinator {
             },
         );
 
-        Ok(text)
+        (ctx, Ok(text))
     }
 
-    /// Main loop.  Runs until the stop sender fires (key-up) or cancel fires.
-    ///
-    /// * `rx` – live audio receiver
-    /// * `session_id` – session identifier for staleness checks
-    /// * `stop_rx` – signals key-up; next value indicates cancel (true) or
-    ///               normal release (false)
+    /// Returns true when the focused field already contains the final text,
+    /// so the caller must not paste it a second time.
     pub async fn run(
         self,
         rx: AudioReceiver,
         session_id: String,
         mut stop_rx: oneshot::Receiver<bool>, // true = cancel
-    ) {
+    ) -> bool {
         // Drain the mic on its own task so a slow Whisper pass cannot fill
         // the audio channel and drop the utterance.
         let pcm = Arc::new(parking_lot::Mutex::new(Vec::<f32>::new()));
@@ -274,57 +333,72 @@ impl TranscriptionCoordinator {
 
         let mut ticker = interval(self.preview_interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut draft = LiveDraft::new();
+
+        // Load while audio is already arriving. If the user lets go first,
+        // fall through to a single final pass.
+        let loaded = select! {
+            biased;
+            result = &mut stop_rx => {
+                return self.finish(result, &session_id, &pcm, None, &mut draft).await;
+            }
+            loaded = self.load_model() => loaded,
+        };
+        let mut ctx = match loaded {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                error!("Model load failed: {e}");
+                self.state.write().set_error(&session_id, e.to_string());
+                let _ = self.app.emit(
+                    EVENT_ERROR,
+                    ErrorEvent {
+                        session_id,
+                        code: "ASR_MODEL_MISSING".into(),
+                        message: e.to_string(),
+                    },
+                );
+                return false;
+            }
+        };
 
         loop {
-            // `biased` so a queued key-up always wins over another preview.
-            // A preview also must not keep running after release: that is
-            // what left the UI stuck on Listening.
             select! {
                 biased;
                 result = &mut stop_rx => {
-                    self.finish(result, &session_id, &pcm).await;
-                    return;
+                    return self.finish(result, &session_id, &pcm, Some(ctx), &mut draft).await;
                 }
                 _ = ticker.tick() => {
                     if !self.state.read().is_listening() {
                         continue;
                     }
-                    let window = {
-                        let buf = pcm.lock();
-                        let start = buf.len().saturating_sub(self.preview_window);
-                        buf[start..].to_vec()
-                    };
-                    if window.len() < TARGET_SAMPLE_RATE as usize / 2 {
+                    let samples = pcm.lock().clone();
+                    if samples.len() < TARGET_SAMPLE_RATE as usize / 3 {
                         continue;
                     }
-                    let preview = self.emit_preview(&session_id, window);
-                    tokio::pin!(preview);
-                    select! {
-                        biased;
-                        result = &mut stop_rx => {
-                            drop(preview);
-                            self.finish(result, &session_id, &pcm).await;
-                            return;
-                        }
-                        _ = &mut preview => {}
-                    }
+                    ctx = self.emit_preview(ctx, &session_id, samples, &mut draft).await;
                 }
             }
         }
     }
 
+    /// `None` for the model means it is still loading (user released immediately).
+    /// Returns true when the focused field already holds the final transcript.
     async fn finish(
         &self,
         result: std::result::Result<bool, tokio::sync::oneshot::error::RecvError>,
         session_id: &str,
         pcm: &Arc<parking_lot::Mutex<Vec<f32>>>,
-    ) {
-        // Let the ingest task pull chunks already queued.
+        ctx: Option<whisper_rs::WhisperContext>,
+        draft: &mut LiveDraft,
+    ) -> bool {
         tokio::time::sleep(Duration::from_millis(40)).await;
         let cancelled = result.unwrap_or(true);
 
         if cancelled {
             info!("Session {session_id} cancelled");
+            if let Err(e) = draft.clear().await {
+                warn!("Could not remove live draft: {e}");
+            }
             self.state.write().cancel();
             let _ = self.app.emit(
                 EVENT_STATE,
@@ -333,7 +407,7 @@ impl TranscriptionCoordinator {
                     state: "IDLE".into(),
                 },
             );
-            return;
+            return false;
         }
 
         if self.state.read().is_listening() {
@@ -347,20 +421,46 @@ impl TranscriptionCoordinator {
             },
         );
 
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => match self.load_model().await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    error!("Model load failed: {e}");
+                    self.state.write().set_error(session_id, e.to_string());
+                    return false;
+                }
+            },
+        };
+
         let samples = pcm.lock().clone();
-        match self.emit_final(session_id, samples).await {
-            Ok(_) => {}
+        let (_ctx, text) = self.emit_final(ctx, session_id, samples).await;
+        match text {
+            Ok(text) => match draft.sync(&text).await {
+                Ok(()) => true,
+                Err(e) => {
+                    warn!("Could not update the live draft, will paste instead: {e}");
+                    let _ = draft.clear().await;
+                    false
+                }
+            },
             Err(e) => {
                 error!("Final inference failed: {e}");
-                self.state.write().set_error(session_id, e.to_string());
-                let _ = self.app.emit(
-                    EVENT_ERROR,
-                    ErrorEvent {
-                        session_id: session_id.to_string(),
-                        code: "ASR_INFERENCE_FAILED".into(),
-                        message: e.to_string(),
-                    },
-                );
+                // Keep whatever already landed in the field.
+                if draft.has_text() {
+                    true
+                } else {
+                    self.state.write().set_error(session_id, e.to_string());
+                    let _ = self.app.emit(
+                        EVENT_ERROR,
+                        ErrorEvent {
+                            session_id: session_id.to_string(),
+                            code: "ASR_INFERENCE_FAILED".into(),
+                            message: e.to_string(),
+                        },
+                    );
+                    false
+                }
             }
         }
     }

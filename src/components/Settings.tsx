@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { getModelStatus } from '../lib/tauri';
 import type { Settings as SettingsType, WhisperModel, ModelStatus } from '../types';
 import myIcon from '../assets/myicon.png';
 import { ShortcutRecorder } from './ShortcutRecorder';
@@ -47,11 +48,19 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
     setDirty(false);
   }, [settings]);
 
-  // Re-check model status whenever the selected quality changes
+  // Check the model the user just picked, not the last saved one.
   useEffect(() => {
+    let cancelled = false;
     setDownloadError(null);
-    // Temporarily save draft model to state so get_model_status reads the right file
-    invoke<ModelStatus>('get_model_status').then(setModelStatus).catch(console.error);
+    setModelStatus(null);
+    getModelStatus(draft.model)
+      .then((status) => {
+        if (!cancelled) setModelStatus(status);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
   }, [draft.model]);
 
   function update<K extends keyof SettingsType>(key: K, val: SettingsType[K]) {
@@ -75,13 +84,14 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
     setDownloading(true);
     setDownloadPct(0);
 
+    const model = draft.model;
     const unlisten = await listen<{ pct: number; done: boolean; error?: string }>(
       'voicekey://download-progress',
       (e) => {
         setDownloadPct(e.payload.pct);
         if (e.payload.done) {
           setDownloading(false);
-          invoke<ModelStatus>('get_model_status').then(setModelStatus).catch(console.error);
+          getModelStatus(model).then(setModelStatus).catch(console.error);
           unlisten();
         }
         if (e.payload.error) {
@@ -105,9 +115,9 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
   return (
     <div id="settings-panel" className="settings-panel">
       <div className="settings-header">
-        <img src={myIcon} alt="VoiceKey" className="settings-logo" />
+        <img src={myIcon} alt="Voicy" className="settings-logo" />
         <div>
-          <h2 className="settings-title">VoiceKey</h2>
+          <h2 className="settings-title">Voicy</h2>
           <p className="settings-subtitle">Settings</p>
         </div>
       </div>
@@ -160,8 +170,8 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
           })}
         </div>
 
-        {/* Download required card — shown when selected model isn't installed */}
-        {modelStatus && !modelStatus.installed && !downloading && (
+        {/* Download required card — shown when the selected model isn't installed */}
+        {modelStatus?.model === draft.model && !modelStatus.installed && !downloading && (
           <div className="download-required-card" role="status">
             <div className="download-required-icon">⬇</div>
             <div className="download-required-body">
@@ -204,7 +214,7 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
         )}
 
         {/* Ready badge */}
-        {modelStatus?.installed && !downloading && (
+        {modelStatus?.model === draft.model && modelStatus.installed && !downloading && (
           <div className="model-ready-badge">
             <span className="model-ready-dot" />
             <span>Ready to use</span>
@@ -298,12 +308,22 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
       <div className="settings-footer">
         <button
           id="save-settings-btn"
-          className={`btn-primary ${!dirty ? 'btn-disabled' : ''}`}
-          disabled={!dirty || saving}
-          onClick={handleSave}
+          className={`btn-primary ${!dirty && modelStatus?.installed !== false ? 'btn-disabled' : ''}`}
+          disabled={saving || downloading || (!dirty && modelStatus?.installed !== false)}
+          onClick={
+            modelStatus?.model === draft.model && !modelStatus.installed
+              ? handleSaveAndDownload
+              : handleSave
+          }
           aria-label="Save settings"
         >
-          {saving ? 'Saving…' : dirty ? 'Save Changes' : 'Saved'}
+          {saving || downloading
+            ? 'Saving…'
+            : modelStatus?.model === draft.model && !modelStatus.installed
+            ? 'Save & Download'
+            : dirty
+            ? 'Save Changes'
+            : 'Saved'}
         </button>
       </div>
     </div>

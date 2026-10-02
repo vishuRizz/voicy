@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>VoiceKey</string>
+  <string>Voicy</string>
   <key>CFBundleDisplayName</key>
-  <string>VoiceKey</string>
+  <string>Voicy</string>
   <key>CFBundleIdentifier</key>
   <string>com.voicekey.app</string>
   <key>CFBundleVersion</key>
@@ -15,11 +15,11 @@
 
   <!-- Microphone usage description shown in system prompt -->
   <key>NSMicrophoneUsageDescription</key>
-  <string>VoiceKey uses the microphone to transcribe your speech locally. No audio is sent to any server.</string>
+  <string>Voicy uses the microphone to transcribe your speech locally. No audio is sent to any server.</string>
 
   <!-- Accessibility usage description -->
   <key>NSAppleEventsUsageDescription</key>
-  <string>VoiceKey uses Accessibility to insert transcribed text into the app you're using.</string>
+  <string>Voicy uses Accessibility to insert transcribed text into the app you're using.</string>
 
   <!-- Allow running in background (tray app) -->
   <key>LSUIElement</key>

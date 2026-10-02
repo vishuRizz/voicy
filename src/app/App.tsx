@@ -3,9 +3,11 @@
 // listening overlay on top of everything.
 
 import React, { useEffect, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { PermissionOnboarding } from '../components/PermissionOnboarding';
 import { SettingsPanel } from '../components/Settings';
 import { ListeningOverlay } from '../components/ListeningOverlay';
+import { MenuBarPanel } from '../components/MenuBarPanel';
 import { ToastContainer } from '../components/Toast';
 import { useSession } from '../hooks/useSession';
 import { useSettings } from '../hooks/useSettings';
@@ -20,7 +22,25 @@ import myIcon from '../assets/myicon.png';
 
 type AppView = 'onboarding' | 'settings';
 
-const App: React.FC = () => {
+function useWindowLabel(): string | null {
+  const [label, setLabel] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    import('@tauri-apps/api/window')
+      .then(({ getCurrentWindow }) => {
+        if (live) setLabel(getCurrentWindow().label);
+      })
+      .catch(() => {
+        if (live) setLabel('main');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return label;
+}
+
+const MainShell: React.FC = () => {
   const [view, setView] = useState<AppView>('settings');
   const [permissions, setPermissions] = useState<PermissionStatus>({
     microphone: 'notdetermined',
@@ -49,6 +69,10 @@ const App: React.FC = () => {
 
     startOnboardingCheck();
 
+    const unview = listen<string>('voicekey://show-view', (e) => {
+      setView(e.payload === 'permissions' ? 'onboarding' : 'settings');
+    });
+
     // Re-check whenever user switches back (e.g. returns from System Settings).
     const recheck = () => {
       getPermissionStatus().then((s) => {
@@ -65,6 +89,7 @@ const App: React.FC = () => {
 
     return () => {
       unlisten.then((fn) => fn());
+      unview.then((fn) => fn());
       window.removeEventListener('focus', recheck);
     };
   }, []);
@@ -105,8 +130,8 @@ const App: React.FC = () => {
       <div className="main-window">
         <header className="app-header">
           <div className="app-logo">
-            <img src={myIcon} alt="VoiceKey" className="app-logo-img" />
-            <span className="logo-text">VoiceKey</span>
+            <img src={myIcon} alt="Voicy" className="app-logo-img" />
+            <span className="logo-text">Voicy</span>
           </div>
           {view === 'settings' && (
             <div className={`header-status ${uiState}`}>
@@ -151,6 +176,13 @@ const App: React.FC = () => {
       </div>
     </div>
   );
+};
+
+const App: React.FC = () => {
+  const label = useWindowLabel();
+  if (label === null) return null;
+  if (label === 'menu') return <MenuBarPanel />;
+  return <MainShell />;
 };
 
 export default App;

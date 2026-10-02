@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2/capability",
   "identifier": "default",
-  "description": "Default capability set for VoiceKey",
-  "windows": ["main"],
+  "description": "Default capability set for Voicy",
+  "windows": ["main", "menu"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

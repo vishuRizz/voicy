@@ -11,18 +11,18 @@ use tracing::{info, warn};
 
 // ── Process name (dev-mode fix) ───────────────────────────────────────────────
 
-/// Set the process display name to "VoiceKey" so macOS shows it correctly
+/// Set the process display name to "Voicy" so macOS shows it correctly
 /// in System Settings → Privacy lists, even in dev mode without a .app bundle.
 pub fn set_process_name() {
     unsafe {
         let process_info: *mut objc::runtime::Object =
             msg_send![Class::get("NSProcessInfo").unwrap(), processInfo];
-        let name = "VoiceKey\0";
+        let name = "Voicy\0";
         let ns_name: *mut objc::runtime::Object =
             msg_send![Class::get("NSString").unwrap(), stringWithUTF8String: name.as_ptr()];
         let _: () = msg_send![process_info, setProcessName: ns_name];
     }
-    info!("Process name set to VoiceKey");
+    info!("Process name set to Voicy");
 }
 
 // ── Permission types ─────────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ pub async fn insert_text_via_clipboard(text: &str) -> Result<()> {
             unhide_without_activating();
         }
         return Err(anyhow!(
-            "Paste failed ({msg}). Grant Accessibility to VoiceKey in System Settings → Privacy & Security → Accessibility."
+            "Paste failed ({msg}). Grant Accessibility to Voicy in System Settings → Privacy & Security → Accessibility."
         ));
     }
 
@@ -233,10 +233,54 @@ fn step_aside_if_frontmost() -> bool {
         if !active {
             return false;
         }
-        info!("VoiceKey is frontmost — hiding so paste lands in the previous app");
+        info!("Voicy is frontmost — hiding so paste lands in the previous app");
         let _: () = msg_send![app, hide: std::ptr::null::<*mut Object>()];
         true
     }
+}
+
+/// Replace the tail of the live transcript in the focused field.
+///
+/// Backspaces and Cmd+V are posted with an explicit modifier mask, so a
+/// shortcut the user is still holding (Ctrl, Option, …) is not mixed in.
+pub fn apply_text_edit(delete_chars: usize, insert: &str) -> Result<()> {
+    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    if delete_chars == 0 && insert.is_empty() {
+        return Ok(());
+    }
+    if !insert.is_empty() {
+        write_clipboard(insert)?;
+    }
+
+    fn post_key(code: u16, flags: CGEventFlags) -> Result<()> {
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow!("could not create keyboard event source"))?;
+        let event = CGEvent::new_keyboard_event(source, code, true)
+            .map_err(|_| anyhow!("could not create keyboard event"))?;
+        event.set_flags(flags);
+        event.post(CGEventTapLocation::HID);
+
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow!("could not create keyboard event source"))?;
+        let event = CGEvent::new_keyboard_event(source, code, false)
+            .map_err(|_| anyhow!("could not create keyboard event"))?;
+        event.set_flags(flags);
+        event.post(CGEventTapLocation::HID);
+        Ok(())
+    }
+
+    for _ in 0..delete_chars {
+        // Delete, with no modifiers, so we only remove our own draft.
+        post_key(51, CGEventFlags::CGEventFlagNull)?;
+    }
+    if !insert.is_empty() {
+        // Let the clipboard and the backspaces land before pasting.
+        std::thread::sleep(std::time::Duration::from_millis(if delete_chars == 0 { 20 } else { 30 }));
+        post_key(9, CGEventFlags::CGEventFlagCommand)?; // V
+    }
+    Ok(())
 }
 
 fn unhide_without_activating() {

@@ -10,9 +10,9 @@ let _nextId = 0;
 function nextId() { return `toast-${++_nextId}`; }
 
 const ERROR_LABELS: Record<string, string> = {
-  ASR_MODEL_MISSING:  'Whisper model not found — run scripts/download_model.sh',
+  ASR_MODEL_MISSING:  "That speech model isn’t downloaded. Pick it in the menu bar and choose Download.",
   MIC_PERMISSION_DENIED: 'Microphone access denied — check System Settings → Privacy',
-  ACCESSIBILITY_DENIED:  'Accessibility denied — enable VoiceKey in System Settings',
+  ACCESSIBILITY_DENIED:  'Accessibility denied — enable Voicy in System Settings',
   INSERTION_FAILED:   'Text insertion failed — Accessibility permission required',
   HOTKEY_FAILED:      'Shortcut registration failed — try a different key combination',
 };

@@ -41,7 +41,7 @@ function PermissionRow({
         <p className="permission-desc">{description}</p>
         {state === 'denied' && (
           <p className="permission-denied-hint">
-            {hint ?? 'Denied — click "Open Settings", enable the toggle next to VoiceKey, then restart the app.'}
+            {hint ?? 'Denied — click "Open Settings", enable the toggle next to Voicy, then restart the app.'}
           </p>
         )}
       </div>
@@ -70,10 +70,10 @@ export const PermissionOnboarding: React.FC<Props> = ({ status, onComplete }) =>
   return (
     <div id="permission-onboarding" className="onboarding-container">
       <div className="onboarding-header">
-        <img src={myIcon} alt="VoiceKey" className="onboarding-logo-img" />
-        <h1 className="onboarding-title">Welcome to VoiceKey</h1>
+        <img src={myIcon} alt="Voicy" className="onboarding-logo-img" />
+        <h1 className="onboarding-title">Welcome to Voicy</h1>
         <p className="onboarding-subtitle">
-          VoiceKey needs two permissions to work. Your audio is processed
+          Voicy needs two permissions to work. Your audio is processed
           locally — nothing leaves your device.
         </p>
       </div>
@@ -106,7 +106,7 @@ export const PermissionOnboarding: React.FC<Props> = ({ status, onComplete }) =>
           className="btn-primary btn-large"
           disabled={!allGranted}
           onClick={onComplete}
-          aria-label="Continue to VoiceKey"
+          aria-label="Continue to Voicy"
         >
           {allGranted ? 'Get Started →' : 'Waiting for permissions…'}
         </button>

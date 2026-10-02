@@ -23,6 +23,17 @@ impl Default for WhisperModel {
 }
 
 impl WhisperModel {
+    /// Accept the names the settings UI sends (`tiny`, `base`, `small`, `medium`).
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name.trim().to_lowercase().as_str() {
+            "tiny" => Ok(Self::Tiny),
+            "base" => Ok(Self::Base),
+            "small" => Ok(Self::Small),
+            "medium" => Ok(Self::Medium),
+            other => Err(format!("unknown model: {other}")),
+        }
+    }
+
     pub fn filename(&self) -> &'static str {
         match self {
             WhisperModel::Tiny => "ggml-tiny.en.bin",

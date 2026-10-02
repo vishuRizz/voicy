@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VoiceKey",
+  "productName": "Voicy",
   "version": "0.1.0",
   "identifier": "com.voicekey.app",
   "build": {
@@ -15,7 +15,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "VoiceKey",
+        "title": "Voicy",
         "width": 420,
         "height": 600,
         "resizable": true,
@@ -23,6 +23,22 @@
         "visible": true,
         "decorations": true,
         "center": true
+      },
+      {
+        "label": "menu",
+        "title": "Voicy",
+        "url": "/",
+        "width": 348,
+        "height": 620,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "focus": false
       }
     ],
     "security": {

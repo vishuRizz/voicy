@@ -95,7 +95,7 @@ export function humanErrorMessage(code: string): string {
     HOTKEY_REGISTRATION_FAILED:
       'Hotkey could not be registered. Another app may be using it.',
     ASR_MODEL_MISSING:
-      'Whisper model not found. Please install a model in Settings.',
+      'That speech model isn’t downloaded. Download it from the menu bar or Settings.',
     ASR_INFERENCE_FAILED: 'Transcription failed. Please try again.',
     INSERTION_PERMISSION_MISSING:
       'Accessibility access denied. Open System Settings → Privacy → Accessibility.',

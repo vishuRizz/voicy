@@ -29,9 +29,9 @@ pub fn run() {
         )
         .init();
 
-    info!("VoiceKey starting…");
+    info!("Voicy starting…");
 
-    // Set the process display name early so macOS shows "VoiceKey" in
+    // Set the process display name early so macOS shows "Voicy" in
     // System Settings → Privacy lists (Microphone, Accessibility).
     #[cfg(target_os = "macos")]
     platform::set_process_name();
@@ -50,32 +50,23 @@ pub fn run() {
         )))
         // ── tray icon ─────────────────────────────────────────────────────
         .setup(|app| {
-            use tauri::{
-                menu::{Menu, MenuItem, PredefinedMenuItem},
-                tray::TrayIconBuilder,
-            };
-
-            let settings_item =
-                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit VoiceKey", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&settings_item, &sep, &quit_item])?;
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
             TrayIconBuilder::new()
-                .menu(&menu)
-                .tooltip("VoiceKey — hold to dictate")
+                .tooltip("Voicy — hold to dictate")
                 .icon(app.default_window_icon().cloned().expect("app icon missing"))
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "settings" => {
-                        if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = event
+                    else {
+                        return;
+                    };
+                    commands::toggle_menu(tray.app_handle(), rect);
                 })
                 .build(app)?;
 
@@ -92,9 +83,11 @@ pub fn run() {
             commands::get_model_status,
             commands::download_model,
             commands::start_onboarding_check,
+            commands::open_settings_window,
+            commands::quit_app,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building VoiceKey")
+        .expect("error while building Voicy")
         .run(|app_handle, event| {
             // Register only once the event loop is running. Doing it from
             // setup (before the loop pumps main-thread tasks) installs a
@@ -143,18 +136,27 @@ pub mod commands {
         pub size_mb: u32,
     }
 
-    /// Return whether the selected model file is present.
+    /// Return whether a model file is present.
+    ///
+    /// `model` is the quality the settings screen just selected. When it is
+    /// omitted, the saved setting is checked instead.
     #[tauri::command]
-    pub async fn get_model_status(app: AppHandle) -> Result<ModelStatus, String> {
+    pub async fn get_model_status(
+        app: AppHandle,
+        model: Option<String>,
+    ) -> Result<ModelStatus, String> {
+        use crate::settings::WhisperModel;
+
         let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
-        let (model, size_mb, filename) = {
-            let s = settings_state.read();
-            (
-                format!("{:?}", s.model).to_lowercase(),
-                s.model.size_mb(),
-                s.model.filename().to_string(),
-            )
+        let selected = match model.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            Some(name) => WhisperModel::parse(name)?,
+            None => settings_state.read().model.clone(),
         };
+        let (model, size_mb, filename) = (
+            format!("{:?}", selected).to_lowercase(),
+            selected.size_mb(),
+            selected.filename().to_string(),
+        );
 
         let resource_dir = app
             .path()
@@ -262,5 +264,48 @@ pub mod commands {
         emit(100.0, true, None);
         tracing::info!("Model downloaded: {}", dest.display());
         Ok(())
+    }
+
+    /// Show the main window. `view` is `settings` or `permissions`.
+    #[tauri::command]
+    pub fn open_settings_window(app: AppHandle, view: Option<String>) {
+        if let Some(menu) = app.get_webview_window("menu") {
+            let _ = menu.hide();
+        }
+        if let Some(view) = view {
+            let _ = Emitter::emit(&app, "voicekey://show-view", view);
+        }
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+        }
+    }
+
+    #[tauri::command]
+    pub fn quit_app(app: AppHandle) {
+        app.exit(0);
+    }
+
+    /// Pop the menu-bar panel under the status icon, or hide it if it is open.
+    pub fn toggle_menu(app: &AppHandle, rect: tauri::Rect) {
+        let Some(win) = app.get_webview_window("menu") else {
+            return;
+        };
+        if win.is_visible().unwrap_or(false) {
+            let _ = win.hide();
+            return;
+        }
+        if let (Ok(scale), Ok(size)) = (win.scale_factor(), win.outer_size()) {
+            let scale = if scale == 0.0 { 1.0 } else { scale };
+            let icon = rect.position.to_logical::<f64>(scale);
+            let icon_size = rect.size.to_logical::<f64>(scale);
+            let width = size.to_logical::<f64>(scale).width;
+            let x = (icon.x + icon_size.width - width).max(8.0);
+            let y = icon.y + icon_size.height + 6.0;
+            let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+        }
+        let _ = win.show();
+        let _ = win.set_focus();
     }
 }
