@@ -2,15 +2,17 @@
 // Full settings panel: shortcut picker, model selector, language, toggles.
 
 import React, { useState, useEffect } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import type { Settings as SettingsType, WhisperModel, ModelStatus } from '../types';
-import { getModelStatus } from '../lib/tauri';
 import myIcon from '../assets/myicon.png';
+import { ShortcutRecorder } from './ShortcutRecorder';
 
-const MODEL_OPTIONS: { value: WhisperModel; label: string; sizeMb: number }[] = [
-  { value: 'tiny', label: 'Tiny (~75 MB)', sizeMb: 75 },
-  { value: 'base', label: 'Base (~142 MB)', sizeMb: 142 },
-  { value: 'small', label: 'Small (~466 MB)', sizeMb: 466 },
-  { value: 'medium', label: 'Medium (~1.5 GB)', sizeMb: 1457 },
+const QUALITY_OPTIONS: { value: WhisperModel; label: string; desc: string }[] = [
+  { value: 'tiny',   label: 'Fast',      desc: 'Quick, best for short phrases' },
+  { value: 'base',   label: 'Balanced',  desc: 'Good accuracy, low latency' },
+  { value: 'small',  label: 'Accurate',  desc: 'High accuracy, recommended' },
+  { value: 'medium', label: 'Best',      desc: 'Maximum accuracy, slower' },
 ];
 
 const LANGUAGE_OPTIONS = [
@@ -35,6 +37,9 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
   const [draft, setDraft] = useState<SettingsType>(settings);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadPct, setDownloadPct] = useState(0);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   // Sync if parent settings change (e.g. loaded from disk)
   useEffect(() => {
@@ -42,8 +47,11 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
     setDirty(false);
   }, [settings]);
 
+  // Re-check model status whenever the selected quality changes
   useEffect(() => {
-    getModelStatus().then(setModelStatus).catch(console.error);
+    setDownloadError(null);
+    // Temporarily save draft model to state so get_model_status reads the right file
+    invoke<ModelStatus>('get_model_status').then(setModelStatus).catch(console.error);
   }, [draft.model]);
 
   function update<K extends keyof SettingsType>(key: K, val: SettingsType[K]) {
@@ -54,6 +62,44 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
   const handleSave = async () => {
     await onSave(draft);
     setDirty(false);
+  };
+
+  // Save settings first (so download_model reads the right model), then download.
+  const handleSaveAndDownload = async () => {
+    setDownloadError(null);
+    // 1. Save settings so the Rust side knows which model to download
+    await onSave(draft);
+    setDirty(false);
+
+    // 2. Start download with live progress
+    setDownloading(true);
+    setDownloadPct(0);
+
+    const unlisten = await listen<{ pct: number; done: boolean; error?: string }>(
+      'voicekey://download-progress',
+      (e) => {
+        setDownloadPct(e.payload.pct);
+        if (e.payload.done) {
+          setDownloading(false);
+          invoke<ModelStatus>('get_model_status').then(setModelStatus).catch(console.error);
+          unlisten();
+        }
+        if (e.payload.error) {
+          setDownloadError(e.payload.error);
+          setDownloading(false);
+          unlisten();
+        }
+      }
+    );
+
+    try {
+      await invoke('download_model');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setDownloadError(msg);
+      setDownloading(false);
+      unlisten();
+    }
   };
 
   return (
@@ -70,61 +116,98 @@ export const SettingsPanel: React.FC<Props> = ({ settings, saving, onSave }) => 
       <section className="settings-section">
         <h3 className="settings-section-title">Hold-to-Talk Shortcut</h3>
         <div className="settings-row">
-          <label htmlFor="shortcut-input" className="settings-label">
-            Global shortcut
-          </label>
-          <input
+          <label className="settings-label">Global shortcut</label>
+          <ShortcutRecorder
             id="shortcut-input"
-            className="settings-input shortcut-input"
-            type="text"
             value={draft.shortcut}
-            onChange={(e) => update('shortcut', e.target.value)}
-            placeholder="e.g. Option+Space"
-            aria-label="Global hold-to-talk shortcut"
+            onChange={(s) => update('shortcut', s)}
           />
         </div>
-        <p className="settings-hint">
-          Hold this key to record. Release to transcribe and insert.
-        </p>
+        <div className="shortcut-footer">
+          <p className="settings-hint">
+            Click the badge and press your key combo. Hold to record, release to insert.
+          </p>
+          {draft.shortcut !== 'Alt+Space' && (
+            <button
+              className="btn-ghost btn-xs"
+              onClick={() => update('shortcut', 'Alt+Space')}
+            >
+              Reset to ⌥Space
+            </button>
+          )}
+        </div>
       </section>
 
-      {/* ── Model ─────────────────────────────────────────────────────── */}
+      {/* ── Speech Quality ─────────────────────────────────────────────── */}
       <section className="settings-section">
-        <h3 className="settings-section-title">Whisper Model</h3>
-        <div className="model-grid">
-          {MODEL_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              id={`model-${opt.value}-btn`}
-              className={`model-card ${draft.model === opt.value ? 'selected' : ''}`}
-              onClick={() => update('model', opt.value)}
-              aria-pressed={draft.model === opt.value}
-              aria-label={`Select ${opt.label} model`}
-            >
-              <span className="model-name">{opt.value.charAt(0).toUpperCase() + opt.value.slice(1)}</span>
-              <span className="model-size">{opt.label.match(/\(.*\)/)?.[0] ?? ''}</span>
-            </button>
-          ))}
+        <h3 className="settings-section-title">Speech Quality</h3>
+        <div className="quality-grid">
+          {QUALITY_OPTIONS.map((opt) => {
+            const isCurrent = draft.model === opt.value;
+            return (
+              <button
+                key={opt.value}
+                id={`quality-${opt.value}-btn`}
+                className={`quality-card ${isCurrent ? 'selected' : ''}`}
+                onClick={() => update('model', opt.value)}
+                aria-pressed={isCurrent}
+                aria-label={`${opt.label} — ${opt.desc}`}
+              >
+                <span className="quality-label">{opt.label}</span>
+                <span className="quality-desc">{opt.desc}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {modelStatus && (
-          <div className={`model-status ${modelStatus.installed ? 'installed' : 'missing'}`}>
-            {modelStatus.installed ? (
-              <span>✓ Model installed</span>
-            ) : (
-              <span>
-                ⚠ Model not installed (~{modelStatus.size_mb} MB required).{' '}
-                <a
-                  href="https://huggingface.co/ggerganov/whisper.cpp"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="link"
-                  id="download-model-link"
-                >
-                  Download
-                </a>
-              </span>
-            )}
+        {/* Download required card — shown when selected model isn't installed */}
+        {modelStatus && !modelStatus.installed && !downloading && (
+          <div className="download-required-card" role="status">
+            <div className="download-required-icon">⬇</div>
+            <div className="download-required-body">
+              <p className="download-required-title">Download required</p>
+              <p className="download-required-sub">
+                This quality level needs to be downloaded before use.
+                Your settings will be saved automatically.
+              </p>
+              {downloadError && (
+                <p className="download-required-error">
+                  ✕ {downloadError}
+                </p>
+              )}
+            </div>
+            <button
+              id="download-model-btn"
+              className="btn-primary btn-download"
+              onClick={handleSaveAndDownload}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : downloadError ? 'Retry' : 'Save & Download'}
+            </button>
+          </div>
+        )}
+
+        {/* Download progress */}
+        {downloading && (
+          <div className="download-progress-card" role="status" aria-live="polite">
+            <div className="download-progress-header">
+              <span className="download-progress-title">Downloading…</span>
+              <span className="download-progress-pct">{Math.round(downloadPct)}%</span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${downloadPct}%` }} />
+            </div>
+            <p className="download-progress-sub">
+              Do not close the app. This may take a few minutes.
+            </p>
+          </div>
+        )}
+
+        {/* Ready badge */}
+        {modelStatus?.installed && !downloading && (
+          <div className="model-ready-badge">
+            <span className="model-ready-dot" />
+            <span>Ready to use</span>
           </div>
         )}
       </section>

@@ -790,3 +790,367 @@ body {
 .settings-footer {
   padding: var(--space-lg) var(--space-lg) var(--space-sm);
 }
+
+
+/* ── App header logo ───────────────────────────────────────────────────────── */
+.app-logo-img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+/* ── Toast system ──────────────────────────────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+  width: calc(100% - 32px);
+  max-width: 360px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: all;
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation-duration: 220ms;
+  animation-fill-mode: both;
+}
+
+.toast--enter  { animation-name: toastIn; }
+.toast--exit   { animation-name: toastOut; }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+@keyframes toastOut {
+  from { opacity: 1; transform: translateY(0)    scale(1); }
+  to   { opacity: 0; transform: translateY(8px)  scale(0.96); }
+}
+
+.toast--error   { background: rgba(220, 38, 38, 0.18);  border-color: rgba(220, 38, 38, 0.35); }
+.toast--warning { background: rgba(234, 179, 8, 0.18);  border-color: rgba(234, 179, 8, 0.35); }
+.toast--info    { background: rgba(59, 130, 246, 0.18); border-color: rgba(59, 130, 246, 0.35); }
+.toast--success { background: rgba(34, 197, 94, 0.18);  border-color: rgba(34, 197, 94, 0.35); }
+
+.toast__icon {
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.toast--error   .toast__icon { color: #f87171; }
+.toast--warning .toast__icon { color: #fbbf24; }
+.toast--info    .toast__icon { color: #60a5fa; }
+.toast--success .toast__icon { color: #4ade80; }
+
+.toast__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.toast__title  { font-weight: 600; color: var(--color-text-primary); }
+.toast__detail { font-size: 11px; color: var(--color-text-secondary); font-family: monospace; }
+
+.toast__close {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.toast__close:hover { opacity: 1; }
+
+/* ── Shortcut recorder ────────────────────────────────────────────────────── */
+.shortcut-recorder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shortcut-recorder-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.shortcut-recorder-btn:hover {
+  border-color: var(--color-accent);
+}
+.shortcut-recorder-btn.recording {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(232, 68, 90, 0.2);
+  animation: recorderPulse 1s ease-in-out infinite;
+}
+@keyframes recorderPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(232, 68, 90, 0.2); }
+  50%       { box-shadow: 0 0 0 5px rgba(232, 68, 90, 0.08); }
+}
+
+.shortcut-badge {
+  display: flex;
+  gap: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  letter-spacing: 0.02em;
+}
+
+.shortcut-recording-hint {
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shortcut-recording-note {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.shortcut-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.btn-ghost:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-accent);
+}
+.btn-xs { font-size: 10px; padding: 2px 6px; }
+
+/* ── Model download progress ──────────────────────────────────────────────── */
+.model-missing-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.model-missing-text { font-size: 12px; color: var(--color-text-secondary); }
+.model-status-ok    { font-size: 12px; color: #4ade80; }
+
+.model-download-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.model-download-label { font-size: 12px; color: var(--color-text-secondary); }
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent), #f97316);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 7px; white-space: nowrap; }
+
+/* ── Quality tier cards ───────────────────────────────────────────────────── */
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.quality-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border-radius: 10px;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  text-align: center;
+}
+.quality-card:hover {
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
+}
+.quality-card.selected {
+  border-color: var(--color-accent);
+  background: rgba(232, 68, 90, 0.1);
+}
+.quality-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+.quality-desc {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  line-height: 1.3;
+}
+.quality-card.selected .quality-label { color: var(--color-accent); }
+
+/* ── Download required card ───────────────────────────────────────────────── */
+.download-required-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.07);
+  animation: fadeSlideIn 0.2s ease both;
+}
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.download-required-icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #fbbf24;
+}
+
+.download-required-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.download-required-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fbbf24;
+  margin: 0;
+}
+
+.download-required-sub {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.download-required-error {
+  font-size: 11px;
+  color: #f87171;
+  margin: 4px 0 0;
+}
+
+.btn-download {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  align-self: center;
+}
+
+/* ── Download progress card ───────────────────────────────────────────────── */
+.download-progress-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeSlideIn 0.2s ease both;
+}
+
+.download-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.download-progress-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.download-progress-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: #818cf8;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-progress-sub {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+/* ── Model ready badge ────────────────────────────────────────────────────── */
+.model-ready-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #4ade80;
+  font-weight: 500;
+}
+
+.model-ready-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ade80;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.6);
+}

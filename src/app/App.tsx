@@ -6,14 +6,17 @@ import React, { useEffect, useState } from 'react';
 import { PermissionOnboarding } from '../components/PermissionOnboarding';
 import { SettingsPanel } from '../components/Settings';
 import { ListeningOverlay } from '../components/ListeningOverlay';
+import { ToastContainer } from '../components/Toast';
 import { useSession } from '../hooks/useSession';
 import { useSettings } from '../hooks/useSettings';
+import { useToast } from '../hooks/useToast';
 import {
   getPermissionStatus,
   onPermissionsStatus,
   startOnboardingCheck,
 } from '../lib/tauri';
 import type { PermissionStatus } from '../types';
+import myIcon from '../assets/myicon.png';
 
 type AppView = 'onboarding' | 'settings';
 
@@ -26,6 +29,7 @@ const App: React.FC = () => {
 
   const { uiState, preview, finalText, error, cancel } = useSession();
   const { settings, saving, save } = useSettings();
+  const { messages, push, dismiss } = useToast();
 
   // ── Permission check on mount ─────────────────────────────────────────────
   useEffect(() => {
@@ -36,7 +40,6 @@ const App: React.FC = () => {
       }
     });
 
-    // Subscribe to live permission updates from Rust
     const unlisten = onPermissionsStatus((s) => {
       setPermissions(s);
       if (s.microphone === 'granted' && s.accessibility === 'granted') {
@@ -46,10 +49,32 @@ const App: React.FC = () => {
 
     startOnboardingCheck();
 
+    // Re-check whenever user switches back (e.g. returns from System Settings).
+    const recheck = () => {
+      getPermissionStatus().then((s) => {
+        setPermissions(s);
+        if (s.microphone === 'granted' && s.accessibility === 'granted') {
+          setView('settings');
+        }
+      });
+    };
+    window.addEventListener('focus', recheck);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') recheck();
+    });
+
     return () => {
       unlisten.then((fn) => fn());
+      window.removeEventListener('focus', recheck);
     };
   }, []);
+
+  // ── Surface session errors as toasts ─────────────────────────────────────
+  useEffect(() => {
+    if (error) {
+      push('error', error.message ?? 'An error occurred', error.code, 7000);
+    }
+  }, [error, push]);
 
   // ── Keyboard cancel (Escape) ──────────────────────────────────────────────
   useEffect(() => {
@@ -64,6 +89,9 @@ const App: React.FC = () => {
 
   return (
     <div id="app-root" className="app-root">
+      {/* Global toast notifications */}
+      <ToastContainer messages={messages} onDismiss={dismiss} />
+
       {/* Always-present overlay (hidden when idle) */}
       <ListeningOverlay
         uiState={uiState}
@@ -77,7 +105,7 @@ const App: React.FC = () => {
       <div className="main-window">
         <header className="app-header">
           <div className="app-logo">
-            <span className="logo-icon">🎙️</span>
+            <img src={myIcon} alt="VoiceKey" className="app-logo-img" />
             <span className="logo-text">VoiceKey</span>
           </div>
           {view === 'settings' && (

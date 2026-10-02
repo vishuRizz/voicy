@@ -12,13 +12,25 @@ use tokio::sync::oneshot;
 use tracing::{error, info};
 
 /// Register the global hold-to-talk shortcut.
+///
+/// `tauri-plugin-global-shortcut` uses the same key names as the browser
+/// `KeyboardEvent.code` spec.  macOS Option key = `Alt`.  So the default
+/// shortcut string must be `"Alt+Space"`, NOT `"Option+Space"`.
 pub fn register_shortcut(app: &AppHandle, settings: &Settings) -> Result<(), VoiceKeyError> {
-    let shortcut: Shortcut = settings.shortcut.parse().map_err(|_| {
-        VoiceKeyError::HotkeyRegistrationFailed(settings.shortcut.clone())
+    // Normalise: accept "Option+" as an alias so existing persisted settings work.
+    let normalised = settings.shortcut
+        .replace("Option+", "Alt+")
+        .replace("option+", "Alt+");
+
+    let shortcut: Shortcut = normalised.parse().map_err(|e| {
+        VoiceKeyError::HotkeyRegistrationFailed(format!("{normalised}: {e}"))
     })?;
 
+    info!("Registering global shortcut: {} (raw: {})", normalised, settings.shortcut);
+
     app.global_shortcut()
-        .on_shortcut(shortcut, move |app, _shortcut, event| {
+        .on_shortcut(shortcut, move |app, shortcut, event| {
+            info!("Shortcut event: {:?} state={:?}", shortcut, event.state());
             let state: tauri::State<SharedAppState> = app.state();
             match event.state() {
                 ShortcutState::Pressed => on_key_down(app.clone(), state.inner().clone()),
@@ -27,7 +39,7 @@ pub fn register_shortcut(app: &AppHandle, settings: &Settings) -> Result<(), Voi
         })
         .map_err(|e| VoiceKeyError::HotkeyRegistrationFailed(e.to_string()))?;
 
-    info!("Global shortcut registered: {}", settings.shortcut);
+    info!("Global shortcut registered OK: {}", normalised);
     Ok(())
 }
 

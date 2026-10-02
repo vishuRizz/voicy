@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Default global hold-to-talk shortcut.
-pub const DEFAULT_SHORTCUT: &str = "Option+Space";
+pub const DEFAULT_SHORTCUT: &str = "Alt+Space";
 
 /// Available Whisper model sizes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,7 +45,7 @@ impl WhisperModel {
 /// All user-configurable settings persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// Global hold-to-talk shortcut (e.g. "Option+Space").
+    /// Global hold-to-talk shortcut (e.g. "Alt+Space" = Option+Space on macOS).
     pub shortcut: String,
     /// Selected Whisper model variant.
     pub model: WhisperModel,
@@ -75,7 +75,7 @@ impl Default for Settings {
 /// Tauri commands exposed to the UI.
 pub mod commands {
     use super::Settings;
-    use tauri::AppHandle;
+    use tauri::{AppHandle, Manager};
     use tauri_plugin_store::StoreExt;
 
     const STORE_PATH: &str = "settings.json";
@@ -96,12 +96,13 @@ pub mod commands {
         Ok(settings)
     }
 
-    /// Persist updated settings.
+    /// Persist updated settings AND re-register the global shortcut if it changed.
     #[tauri::command]
     pub async fn update_settings(
         app: AppHandle,
         settings: Settings,
     ) -> Result<(), String> {
+        // ── Persist to disk ───────────────────────────────────────────────
         let store = app
             .store(STORE_PATH)
             .map_err(|e| format!("store open failed: {e}"))?;
@@ -109,11 +110,37 @@ pub mod commands {
         let value = serde_json::to_value(&settings)
             .map_err(|e| format!("serialize failed: {e}"))?;
 
-        store
-            .set(SETTINGS_KEY, value);
+        store.set(SETTINGS_KEY, value);
         store
             .save()
             .map_err(|e| format!("store save failed: {e}"))?;
+
+        // ── Update in-memory state ────────────────────────────────────────
+        {
+            let state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
+            *state.write() = settings.clone();
+        }
+
+        // ── Re-register global shortcut ───────────────────────────────────
+        use tauri::Emitter;
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+        // Unregister everything first so the old combo is freed.
+        if let Err(e) = app.global_shortcut().unregister_all() {
+            tracing::warn!("Failed to unregister shortcuts: {e}");
+        }
+
+        match crate::hotkey::register_shortcut(&app, &settings) {
+            Ok(()) => {
+                tracing::info!("Shortcut re-registered: {}", settings.shortcut);
+                let _ = Emitter::emit(&app, "voicekey://hotkey-ok", &settings.shortcut);
+            }
+            Err(e) => {
+                tracing::error!("Shortcut re-registration failed: {e}");
+                let _ = Emitter::emit(&app, "voicekey://hotkey-failed", &e.to_string());
+                return Err(e.to_string());
+            }
+        }
 
         Ok(())
     }

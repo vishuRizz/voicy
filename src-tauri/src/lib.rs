@@ -31,6 +31,11 @@ pub fn run() {
 
     info!("VoiceKey starting…");
 
+    // Set the process display name early so macOS shows "VoiceKey" in
+    // System Settings → Privacy lists (Microphone, Accessibility).
+    #[cfg(target_os = "macos")]
+    platform::set_process_name();
+
     tauri::Builder::default()
         // ── plugins ───────────────────────────────────────────────────────
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -54,15 +59,43 @@ pub fn run() {
                             handle.state();
                         *settings_state.write() = saved.clone();
 
-                        if let Err(e) = hotkey::register_shortcut(&handle, &saved) {
-                            tracing::error!("Hotkey registration failed on startup: {e}");
+                        match hotkey::register_shortcut(&handle, &saved) {
+                            Ok(()) => {
+                                let _ = tauri::Emitter::emit(
+                                    &handle,
+                                    "voicekey://hotkey-ok",
+                                    &saved.shortcut,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!("Hotkey registration failed on startup: {e}");
+                                let _ = tauri::Emitter::emit(
+                                    &handle,
+                                    "voicekey://hotkey-failed",
+                                    &e.to_string(),
+                                );
+                            }
                         }
                     }
                     Err(e) => {
                         tracing::warn!("Could not load settings ({e}), using defaults");
                         let defaults = Settings::default();
-                        if let Err(e) = hotkey::register_shortcut(&handle, &defaults) {
-                            tracing::error!("Hotkey registration failed: {e}");
+                        match hotkey::register_shortcut(&handle, &defaults) {
+                            Ok(()) => {
+                                let _ = tauri::Emitter::emit(
+                                    &handle,
+                                    "voicekey://hotkey-ok",
+                                    &defaults.shortcut,
+                                );
+                            }
+                            Err(e) => {
+                                tracing::error!("Hotkey registration failed: {e}");
+                                let _ = tauri::Emitter::emit(
+                                    &handle,
+                                    "voicekey://hotkey-failed",
+                                    &e.to_string(),
+                                );
+                            }
                         }
                     }
                 }
@@ -112,6 +145,7 @@ pub fn run() {
             platform::request_microphone_permission,
             platform::request_accessibility_permission,
             commands::get_model_status,
+            commands::download_model,
             commands::start_onboarding_check,
         ])
         .run(tauri::generate_context!())
@@ -169,6 +203,87 @@ pub mod commands {
     pub async fn start_onboarding_check(app: AppHandle) -> Result<(), String> {
         let status = crate::platform::check_permissions().await;
         let _ = Emitter::emit(&app, "permissions://status", &status);
+        Ok(())
+    }
+    /// Stream-download a Whisper model file and emit progress events.
+    ///
+    /// Emits `voicekey://download-progress` with `{ pct: f32, done: bool, error: Option<String> }`
+    #[tauri::command]
+    pub async fn download_model(app: AppHandle) -> Result<(), String> {
+        use std::io::{Read, Write};
+
+        let settings_state: tauri::State<parking_lot::RwLock<Settings>> = app.state();
+        let (filename, size_mb) = {
+            let s = settings_state.read();
+            (s.model.filename().to_string(), s.model.size_mb())
+        };
+
+        let resource_dir = app
+            .path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?;
+        let models_dir = resource_dir.join("models");
+        std::fs::create_dir_all(&models_dir).map_err(|e| e.to_string())?;
+        let dest = models_dir.join(&filename);
+
+        // Base URL for whisper.cpp GGML models on Hugging Face.
+        let url = format!(
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{filename}"
+        );
+
+        tracing::info!("Downloading model: {url} → {}", dest.display());
+
+        #[derive(serde::Serialize, Clone)]
+        struct Progress { pct: f32, done: bool, error: Option<String> }
+
+        let app_for_emit = app.clone();
+        let emit = std::sync::Arc::new(move |pct: f32, done: bool, error: Option<String>| {
+            let _ = Emitter::emit(&app_for_emit, "voicekey://download-progress",
+                &Progress { pct, done, error });
+        });
+
+        emit(0.0, false, None);
+
+        // Use a blocking thread so we can stream without async complexity.
+        let dest_clone = dest.clone();
+        let total_bytes = size_mb as u64 * 1024 * 1024;
+        let emit_inner = emit.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let resp = ureq::get(&url)
+                .call()
+                .map_err(|e| format!("Download failed: {e}"))?;
+
+            let mut file = std::fs::File::create(&dest_clone)
+                .map_err(|e| format!("Cannot create file: {e}"))?;
+
+            let mut reader = resp.into_reader();
+            let mut buf = vec![0u8; 65_536]; // 64 KB chunks
+            let mut downloaded: u64 = 0;
+
+            loop {
+                let n = reader.read(&mut buf).map_err(|e| format!("Read error: {e}"))?;
+                if n == 0 { break; }
+                file.write_all(&buf[..n]).map_err(|e| format!("Write error: {e}"))?;
+                downloaded += n as u64;
+                let pct = if total_bytes > 0 {
+                    (downloaded as f32 / total_bytes as f32 * 100.0).min(99.0)
+                } else { 50.0 };
+                emit_inner(pct, false, None);
+            }
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| format!("Task failed: {e}"))
+        .and_then(|r| r)
+        .map_err(|e| {
+            emit(0.0, false, Some(e.clone()));
+            e
+        })?;
+
+        emit(100.0, true, None);
+        tracing::info!("Model downloaded: {}", dest.display());
         Ok(())
     }
 }

@@ -22,6 +22,7 @@ function PermissionRow({
   description,
   state,
   onGrant,
+  hint,
 }: {
   id: string;
   icon: string;
@@ -29,6 +30,7 @@ function PermissionRow({
   description: string;
   state: 'granted' | 'denied' | 'notdetermined';
   onGrant: () => void;
+  hint?: string;
 }) {
   const isGranted = state === 'granted';
   return (
@@ -39,7 +41,7 @@ function PermissionRow({
         <p className="permission-desc">{description}</p>
         {state === 'denied' && (
           <p className="permission-denied-hint">
-            Permission was denied. Open System Settings to re-enable.
+            {hint ?? 'Denied — click "Open Settings", enable the toggle next to VoiceKey, then restart the app.'}
           </p>
         )}
       </div>
@@ -53,7 +55,7 @@ function PermissionRow({
             onClick={onGrant}
             aria-label={`Grant ${title} permission`}
           >
-            {state === 'denied' ? 'Open Settings' : 'Allow'}
+            {state === 'denied' ? 'Open Settings' : 'Request Access'}
           </button>
         )}
       </div>

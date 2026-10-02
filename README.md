@@ -195,3 +195,9 @@ Rust Core
 ## License
 
 MIT — see `LICENSE`.
+
+
+## my personal run
+cd /Users/vishupratap/Movies/voice-key
+source ~/.cargo/env && export PATH="/opt/homebrew/bin:$PATH"
+npm run tauri -- dev
