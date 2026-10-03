@@ -5,3 +5,4 @@ dist-ssr/
 src-tauri/target/
 models/*.bin
 .DS_Store
+config.bat
