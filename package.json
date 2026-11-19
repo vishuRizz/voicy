@@ -4,16 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node init && vite",
-    "build": "node init && tsc && vite build",
+    "dev": "vite",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.0.0",
-    "dotenv": "^8.2.0",
-    "node-fetch": "^3.3.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
